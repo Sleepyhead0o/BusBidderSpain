@@ -1,4 +1,4 @@
-offer_id,company,origin,destination,travel_date,departure_time,arrival_date,arrival_time,duration_minutes,price_eur,transfers,luggage_bags,changeable,refundable,available_seats,customer_rating,estimated_co2_kg
+offer_id,comp,orig,dest,travel_date,dep_time,arrivDate,arrivTime,dur,price,transf,lug,ch,refund,available_seats,c-rating,co2
 BUS001,SolRuta,Madrid,Barcelona,2026-11-12,07:00,2026-11-12,15:57,537,33.54,1,1,false,false,18,3.6,22.9
 BUS002,SolRuta,Madrid,Valencia,2026-11-13,09:15,2026-11-13,14:10,295,11.79,0,1,false,false,43,4.0,13.1
 BUS003,SolRuta,Madrid,Seville,2026-11-14,11:30,2026-11-14,18:39,429,23.51,0,1,false,false,10,3.9,19.6
