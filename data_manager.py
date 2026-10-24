@@ -1,3 +1,4 @@
+
 import csv
 import logging
 import re
@@ -70,7 +71,9 @@ def to_datetime(day, clock):
         )
 
     except ValueError as e:
-        raise OfferValidationError("Invalid date/time") from e
+        raise OfferValidationError(
+            "Invalid date/time"
+        ) from e
 
 
 def to_decimal(v, name):
@@ -95,7 +98,7 @@ def validate_offer(row):
 
     missing = [
         f for f in FIELDS
-        if f != "estimated_co2_kg"
+        if f != "co2"
         and (
             row.get(f) is None
             or not str(row[f]).strip()
@@ -112,35 +115,37 @@ def validate_offer(row):
     if not re.fullmatch(r"(BUS\d{3}|INVALID\d{2})", oid):
         raise OfferValidationError("Invalid offer ID")
 
-    if row["company"] not in COMPANIES:
+    if row["comp"] not in COMPANIES:
         raise OfferValidationError("Unknown company")
 
-    if row["origin"] != "Madrid":
+    if row["orig"] != "Madrid":
         raise OfferValidationError("Invalid origin")
 
-    if row["destination"] not in DESTINATIONS:
+    if row["dest"] not in DESTINATIONS:
         raise OfferValidationError("Unknown destination")
 
     dep = to_datetime(
-        row["travel_date"], row["departure_time"]
+        row["travel_date"], row["dep_time"]
     )
 
     arr = to_datetime(
-        row["arrival_date"], row["arrival_time"]
+        row["arrivDate"], row["arrivTime"]
     )
 
-    dur = to_integer(row["duration_minutes"], "duration")
-    tr = to_integer(row["transfers"], "transfers")
-    lug = to_integer(row["luggage_bags"], "luggage")
-    seats = to_integer(row["available_seats"], "seats")
+    dur = to_integer(row["dur"], "duration")
+    tr = to_integer(row["transf"], "transfers")
+    lug = to_integer(row["lug"], "luggage")
+    seats = to_integer(
+        row["available_seats"], "seats"
+    )
 
-    price = to_decimal(row["price_eur"], "price")
-    rating = to_decimal(row["customer_rating"], "rating")
+    price = to_decimal(row["price"], "price")
+    rating = to_decimal(row["c-rating"], "rating")
 
-    ch = to_boolean(row["changeable"], "changeable")
-    ref = to_boolean(row["refundable"], "refundable")
+    ch = to_boolean(row["ch"], "changeable")
+    ref = to_boolean(row["refund"], "refundable")
 
-    v = row.get("estimated_co2_kg")
+    v = row.get("co2")
 
     co2 = (
         to_decimal(v, "CO2")
@@ -164,9 +169,9 @@ def validate_offer(row):
 
     return BusOffer(
         offer_id=oid,
-        company=row["company"],
-        origin=row["origin"],
-        destination=row["destination"],
+        company=row["comp"],
+        origin=row["orig"],
+        destination=row["dest"],
         departure=dep,
         arrival=arr,
         duration_minutes=dur,
@@ -186,7 +191,9 @@ def load_offers(filename):
     path = Path(filename)
 
     if not path.is_file():
-        raise FileNotFoundError(f"Missing file: {path}")
+        raise FileNotFoundError(
+            f"Missing file: {path}"
+        )
 
     valid = []
     rejected = []
@@ -205,31 +212,47 @@ def load_offers(filename):
 
         if missing:
             raise OfferValidationError(
-                "Missing columns: " + ", ".join(sorted(missing))
+                "Missing columns: "
+                + ", ".join(sorted(missing))
             )
 
         for line, row in enumerate(reader, 2):
 
             try:
                 if None in row:
-                    raise OfferValidationError("Extra columns")
+                    raise OfferValidationError(
+                        "Extra columns"
+                    )
 
                 o = validate_offer(row)
 
                 if o.offer_id in seen:
-                    raise OfferValidationError("Duplicate ID")
+                    raise OfferValidationError(
+                        "Duplicate ID"
+                    )
 
                 seen.add(o.offer_id)
                 valid.append(o)
 
-            except (OfferValidationError, ValueError, TypeError) as e:
+            except (
+                OfferValidationError,
+                ValueError,
+                TypeError
+            ) as e:
+
                 rejected.append(
-                    (line, row.get("offer_id", "?"), str(e))
+                    (
+                        line,
+                        row.get("offer_id", "?"),
+                        str(e)
+                    )
                 )
 
                 logging.warning(
                     "Row %s (%s): %s",
-                    line, row.get("offer_id", "?"), e
+                    line,
+                    row.get("offer_id", "?"),
+                    e
                 )
 
     return valid, rejected
