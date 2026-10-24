@@ -1,3 +1,4 @@
+
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from math import isfinite
@@ -24,36 +25,36 @@ class BusOffer:
 
 @dataclass(frozen=True)
 class TravellerRequest:
-    destination: str
-    start_date: date
-    end_date: date
-    max_price: float | None = None
-    max_transfers: int | None = None
-    min_luggage: int = 0
-    max_duration: int | None = None
-    require_changeable: bool = False
-    require_refundable: bool = False
-    preferred_time: time = time(9, 0)
+    dest: str
+    startD: date
+    endD: date
+    max_p: float | None = None
+    max_tr: int | None = None
+    min_lug: int = 0
+    max_dur: int | None = None
+    req_ch: bool = False
+    req_ref: bool = False
+    pref_t: time = time(9, 0)
     seats: int = 1
 
     def __post_init__(self):
 
         if (
-            not isinstance(self.destination, str)
-            or not self.destination.strip()
+            not isinstance(self.dest, str)
+            or not self.dest.strip()
         ):
             raise ValueError("Invalid destination")
 
         if (
-            type(self.start_date) is not date
-            or type(self.end_date) is not date
+            type(self.startD) is not date
+            or type(self.endD) is not date
         ):
             raise ValueError("Invalid dates")
 
-        if self.start_date > self.end_date:
+        if self.startD > self.endD:
             raise ValueError("Invalid date range")
 
-        p = self.max_price
+        p = self.max_p
 
         if p is not None:
             if (
@@ -65,26 +66,27 @@ class TravellerRequest:
                 raise ValueError("Invalid budget")
 
         vals = (
-            ("Transfers", self.max_transfers, 0),
-            ("Luggage", self.min_luggage, 0),
-            ("Duration", self.max_duration, 1),
+            ("Transfers", self.max_tr, 0),
+            ("Luggage", self.min_lug, 0),
+            ("Duration", self.max_dur, 1),
             ("Seats", self.seats, 1)
         )
 
-        for name, v, low in vals:
-            if v is None and name in ("Transfers", "Duration"):
+        for n, v, low in vals:
+
+            if v is None and n in ("Transfers", "Duration"):
                 continue
 
             if type(v) is not int or v < low:
-                raise ValueError(f"Invalid {name}")
+                raise ValueError(f"Invalid {n}")
 
-        if type(self.require_changeable) is not bool:
+        if type(self.req_ch) is not bool:
             raise ValueError("Invalid changeable requirement")
 
-        if type(self.require_refundable) is not bool:
+        if type(self.req_ref) is not bool:
             raise ValueError("Invalid refundable requirement")
 
-        if type(self.preferred_time) is not time:
+        if type(self.pref_t) is not time:
             raise ValueError("Invalid preferred time")
 
 
