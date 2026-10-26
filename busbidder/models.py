@@ -1,96 +1,96 @@
-
 from dataclasses import dataclass
 from datetime import date, datetime, time
+from decimal import Decimal
 from math import isfinite
 
 
-@dataclass(frozen=True)
-class BusOffer:
-    offer_id: str
+class DataError(Exception):
+    pass
+
+
+class BookingError(Exception):
+    pass
+
+
+@dataclass
+class Company:
+    code: str
+    name: str
+    description: str
+
+
+@dataclass
+class Offer:
+    id: str
     company: str
-    origin: str
     destination: str
-    departure: datetime
-    arrival: datetime
-    duration_minutes: int
-    price_eur: float
+    depart: datetime
+    arrive: datetime
+    price: Decimal
     transfers: int
-    luggage_bags: int
+    luggage: int
     changeable: bool
     refundable: bool
-    available_seats: int
-    customer_rating: float
-    estimated_co2_kg: float | None
+    seats: int
+    rating: float
+    emissions: float | None = None
+
+    @property
+    def duration(self):
+        return int(
+            (self.arrive - self.depart).total_seconds() / 60
+        )
+
+    @property
+    def day(self):
+        return self.depart.date()
 
 
-@dataclass(frozen=True)
-class TravellerRequest:
-    dest: str
-    startD: date
-    endD: date
-    max_p: float | None = None
-    max_tr: int | None = None
-    min_lug: int = 0
-    max_dur: int | None = None
-    req_ch: bool = False
-    req_ref: bool = False
-    pref_t: time = time(9, 0)
+@dataclass
+class Request:
+    destination: str
+    start: date
+    end: date
+    budget: Decimal | None = None
+    preferred: time | None = None
+    max_transfers: int | None = None
+    luggage: int = 0
+    max_minutes: int | None = None
+    changeable: bool = False
+    refundable: bool = False
     seats: int = 1
 
     def __post_init__(self):
+        if not self.destination or self.start > self.end:
+            raise DataError(
+                "Destination or travel dates are invalid."
+            )
 
-        if (
-            not isinstance(self.dest, str)
-            or not self.dest.strip()
-        ):
-            raise ValueError("Invalid destination")
+        if self.budget is not None:
+            if not self.budget.is_finite() or self.budget <= 0:
+                raise DataError(
+                    "Budget must be positive."
+                )
 
-        if (
-            type(self.startD) is not date
-            or type(self.endD) is not date
-        ):
-            raise ValueError("Invalid dates")
+        if self.max_transfers is not None:
+            if self.max_transfers < 0:
+                raise DataError(
+                    "Maximum transfers cannot be negative."
+                )
 
-        if self.startD > self.endD:
-            raise ValueError("Invalid date range")
+        if self.max_minutes is not None:
+            if self.max_minutes <= 0:
+                raise DataError(
+                    "Maximum duration must be positive."
+                )
 
-        p = self.max_p
-
-        if p is not None:
-            if (
-                isinstance(p, bool)
-                or not isinstance(p, (int, float))
-                or not isfinite(p)
-                or p < 0
-            ):
-                raise ValueError("Invalid budget")
-
-        vals = (
-            ("Transfers", self.max_tr, 0),
-            ("Luggage", self.min_lug, 0),
-            ("Duration", self.max_dur, 1),
-            ("Seats", self.seats, 1)
-        )
-
-        for n, v, low in vals:
-
-            if v is None and n in ("Transfers", "Duration"):
-                continue
-
-            if type(v) is not int or v < low:
-                raise ValueError(f"Invalid {n}")
-
-        if type(self.req_ch) is not bool:
-            raise ValueError("Invalid changeable requirement")
-
-        if type(self.req_ref) is not bool:
-            raise ValueError("Invalid refundable requirement")
-
-        if type(self.pref_t) is not time:
-            raise ValueError("Invalid preferred time")
+        if self.luggage < 0 or self.seats < 1:
+            raise DataError(
+                "Luggage or seat count is invalid."
+            )
 
 
-@dataclass(frozen=True)
+@dataclass
 class Weights:
     price: float
     duration: float
@@ -98,7 +98,6 @@ class Weights:
     flexibility: float
 
     def __post_init__(self):
-
         vals = (
             self.price,
             self.duration,
@@ -107,23 +106,21 @@ class Weights:
         )
 
         if any(
-            isinstance(v, bool)
-            or not isinstance(v, (int, float))
-            or not isfinite(v)
-            or not 0 <= v <= 1
+            not isfinite(v) or v < 0
             for v in vals
         ):
-            raise ValueError("Invalid weights")
+            raise DataError(
+                "Weights must be nonnegative numbers."
+            )
 
-        if abs(sum(vals) - 1) > 1e-6:
-            raise ValueError("Weights must total 1.0")
+        if abs(sum(vals) - 100) > 0.000001:
+            raise DataError(
+                "Weights must add up to 100%."
+            )
 
 
-@dataclass(frozen=True)
-class RankedOffer:
-    offer: BusOffer
-    price_score: float
-    duration_score: float
-    time_score: float
-    flexibility_score: float
-    total_score: float
+@dataclass
+class Score:
+    offer: Offer
+    points: dict
+    total: float

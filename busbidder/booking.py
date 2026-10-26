@@ -1,143 +1,188 @@
-
-import json
 import logging
-import os
+import re
+import secrets
+import sqlite3
 
+from contextlib import contextmanager
+from dataclasses import replace
 from datetime import datetime
-from pathlib import Path
-from uuid import uuid4
 
 
-class BookingError(ValueError):
-    pass
+REF = re.compile(
+    r"BBS-\d{8}-[A-F0-9]{8}$"
+)
 
 
-class BookingManager:
+from .models import BookingError
 
-    def __init__(self, path):
-        self.path = Path(path)
 
-    def load_bookings(self):
+class Booker:
 
-        if not self.path.exists():
-            return []
+    def __init__(self, path, offers):
+        self.path = path
 
-        try:
-            with self.path.open(encoding="utf-8") as f:
-                data = json.load(f)
-
-            if not isinstance(data, list):
-                raise BookingError("Invalid bookings file")
-
-            for b in data:
-                if (
-                    not isinstance(b, dict)
-                    or not isinstance(b.get("offer_id"), str)
-                    or not isinstance(b.get("ref"), str)
-                    or type(b.get("seats")) is not int
-                    or b["seats"] <= 0
-                ):
-                    raise BookingError("Invalid booking record")
-
-            return data
-
-        except (OSError, ValueError, TypeError) as e:
-            raise BookingError("Cannot load bookings") from e
-
-    def remaining(self, offers):
-
-        counts = {
-            o.offer_id: o.available_seats
-            for o in offers
-        }
-
-        for b in self.load_bookings():
-            oid = b["offer_id"]
-
-            if oid in counts:
-                counts[oid] -= b["seats"]
-
-        return counts
-
-    def book(self, o, seats, name):
-
-        if type(seats) is not int or seats <= 0:
-            raise BookingError("Invalid seat count")
-
-        if not isinstance(name, str) or not name.strip():
-            raise BookingError("Invalid traveller name")
-
-        bookings = self.load_bookings()
-
-        used = sum(
-            b["seats"]
-            for b in bookings
-            if b["offer_id"] == o.offer_id
-        )
-
-        if o.available_seats - used < seats:
-            raise BookingError("Not enough seats")
-
-        refs = {
-            b["ref"]
-            for b in bookings
-        }
-
-        ref = "BB-" + uuid4().hex[:12].upper()
-
-        while ref in refs:
-            ref = "BB-" + uuid4().hex[:12].upper()
-
-        b = {
-            "ref": ref,
-            "offer_id": o.offer_id,
-            "name": name.strip(),
-            "comp": o.company,
-            "orig": o.origin,
-            "dest": o.destination,
-            "dep": o.departure.isoformat(
-                timespec="minutes"
-            ),
-            "arriv": o.arrival.isoformat(
-                timespec="minutes"
-            ),
-            "seats": seats,
-            "price": round(
-                o.price_eur * seats, 2
-            ),
-            "ch": o.changeable,
-            "refund": o.refundable,
-            "payment": "SIMULATED",
-            "created": datetime.now().isoformat(
-                timespec="seconds"
-            )
-        }
-
-        bookings.append(b)
-
-        self.path.parent.mkdir(
+        path.parent.mkdir(
             parents=True,
             exist_ok=True
         )
 
-        tmp = self.path.with_name(
-            self.path.name + ".tmp"
+        with self.db() as db:
+            db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS seats (
+                    id TEXT PRIMARY KEY,
+                    qty INTEGER NOT NULL CHECK (qty >= 0)
+                )
+                """
+            )
+
+            db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS bookings (
+                    ref TEXT PRIMARY KEY,
+                    id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    qty INTEGER NOT NULL,
+                    total TEXT NOT NULL,
+                    changeable INTEGER NOT NULL,
+                    refundable INTEGER NOT NULL,
+                    date TEXT NOT NULL
+                )
+                """
+            )
+
+            db.executemany(
+                "INSERT OR IGNORE INTO seats VALUES (?, ?)",
+                [
+                    (off.id, off.seats)
+                    for off in offers
+                ]
+            )
+
+    @contextmanager
+    def db(self):
+        db = sqlite3.connect(self.path)
+        db.row_factory = sqlite3.Row
+
+        try:
+            with db:
+                yield db
+
+        finally:
+            db.close()
+
+    def available(self, offers):
+        with self.db() as db:
+            cur = {
+                row["id"]: row["qty"]
+                for row in db.execute(
+                    "SELECT id, qty FROM seats"
+                )
+            }
+
+        return [
+            replace(
+                off,
+                seats=cur[off.id]
+            )
+            for off in offers
+        ]
+
+    def book(self, off, name, qty):
+        name = name.strip()
+
+        if (
+            not name
+            or len(name) > 80
+            or not isinstance(qty, int)
+            or isinstance(qty, bool)
+            or qty < 1
+        ):
+            raise BookingError(
+                "Invalid passenger name or seat count."
+            )
+
+        now = datetime.now().isoformat(
+            timespec="seconds"
+        )
+
+        ref = (
+            f"BBS-{datetime.now():%Y%m%d}-"
+            f"{secrets.token_hex(4).upper()}"
+        )
+
+        total = str(
+            off.price * qty
         )
 
         try:
-            tmp.write_text(
-                json.dumps(bookings, indent=4),
-                encoding="utf-8"
-            )
+            with self.db() as db:
+                db.execute(
+                    "BEGIN IMMEDIATE"
+                )
 
-            os.replace(tmp, self.path)
+                cur = db.execute(
+                    """
+                    UPDATE seats
+                    SET qty = qty - ?
+                    WHERE id = ?
+                    AND qty >= ?
+                    """,
+                    (qty, off.id, qty)
+                )
 
-        except OSError as e:
-            raise BookingError("Cannot save booking") from e
+                if cur.rowcount != 1:
+                    raise BookingError(
+                        "Not enough seats available."
+                    )
+
+                db.execute(
+                    """
+                    INSERT INTO bookings
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        ref,
+                        off.id,
+                        name,
+                        qty,
+                        total,
+                        int(off.changeable),
+                        int(off.refundable),
+                        now
+                    )
+                )
+
+        except sqlite3.Error as err:
+            raise BookingError(
+                f"Could not save booking: {err}"
+            ) from err
 
         logging.info(
-            "Booking %s: offer %s, seats %s",
-            ref, o.offer_id, seats
+            "Booked %s, offer %s, seats %d",
+            ref,
+            off.id,
+            qty
         )
 
-        return b
+        return self.find(ref)
+
+    def find(self, ref):
+        if not REF.fullmatch(ref):
+            raise BookingError(
+                "Invalid booking reference."
+            )
+
+        with self.db() as db:
+            row = db.execute(
+                """
+                SELECT * FROM bookings
+                WHERE ref = ?
+                """,
+                (ref,)
+            ).fetchone()
+
+        if row:
+            return dict(row)
+
+        return None
