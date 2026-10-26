@@ -1,0 +1,3 @@
+# Python 3.12
+# No external packages required.
+# All modules use the Python standard library.

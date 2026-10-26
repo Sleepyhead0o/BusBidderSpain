@@ -1,0 +1,11 @@
+line,id,reason
+154,INVALID,Invalid offer ID.
+155,OF-0901,Price must be positive.
+156,OF-0902,Unknown company or destination.
+157,OF-0903,Invalid or missing offer value: month must be in 1..12
+158,OF-0904,Invalid departure/arrival order.
+159,OF-0905,Rating must be from 1 to 5.
+160,OF-0906,Invalid seats.
+161,OF-0907,Invalid changeable.
+162,OF-0908,Unknown company or destination.
+163,OF-0001,Duplicate offer ID.
