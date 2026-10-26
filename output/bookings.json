@@ -14,5 +14,21 @@
         "refund": false,
         "payment": "SIMULATED",
         "created": "2026-10-25T17:40:44"
+    },
+    {
+        "ref": "BB-92EADA8C4E5B",
+        "offer_id": "BUS004",
+        "name": "tom",
+        "comp": "SolRuta",
+        "orig": "Madrid",
+        "dest": "Malaga",
+        "dep": "2026-11-12T13:45",
+        "arriv": "2026-11-12T21:23",
+        "seats": 1,
+        "price": 23.51,
+        "ch": false,
+        "refund": false,
+        "payment": "SIMULATED",
+        "created": "2026-10-25T17:49:20"
     }
 ]

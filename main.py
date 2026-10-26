@@ -131,10 +131,9 @@ def create_booking(mgr, ranked, req):
     print("\n=== Booking Confirmation ===")
 
     for key in (
-        "reference", "traveller", "company",
-        "destination", "departure", "seats",
-        "total_price_eur", "changeable",
-        "refundable", "payment_status"
+    "ref", "offer_id", "name",
+    "comp", "dest", "dep",
+    "seats", "price", "payment"
     ):
         print(f"{key}: {b[key]}")
 
