@@ -1,226 +1,547 @@
-
 import logging
+import sqlite3
+import sys
 
+from datetime import date, time
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-from booking import BookingManager, BookingError
-from data_manager import load_offers
-from requests import (
-    display_requests,
-    select_request,
-    RequestValidationError
-)
-from ranking import (
-    display_profiles,
-    select_profile,
+from busbidder.booking import Booker
+
+from busbidder.market import (
+    explain,
     filter_offers,
-    rank_offers,
-    explain
+    load_data,
+    load_profiles,
+    rank_offers
+)
+
+from busbidder.models import (
+    BookingError,
+    DataError,
+    Request,
+    Weights
 )
 
 
-ROOT = Path(__file__).parent
-DATA = ROOT / "data" / "offers.csv"
-OUT = ROOT / "output"
+ROOT = Path(__file__).resolve().parent
 
 
-def display_request(name, req, profile):
+def ask(msg, conv=str, default=None):
+    while True:
+        txt = input(msg).strip()
 
-    print("\n=== Selected Request ===")
-    print("Request:", name)
-    print("Profile:", profile)
-    print("Route: Madrid to", req.dest)
-    print("Travel period:", req.startD, "-", req.endD)
-    print("Budget:", req.max_p)
-    print("Max transfers:", req.max_tr)
-    print("Luggage:", req.min_lug)
-    print("Max duration:", req.max_dur)
-    print("Changeable:", req.req_ch)
-    print("Refundable:", req.req_ref)
-    print("Preferred time:", req.pref_t)
-    print("Seats:", req.seats)
+        if not txt and default is not None:
+            return default
+
+        try:
+            return conv(txt)
+
+        except (ValueError, InvalidOperation):
+            print(
+                "Invalid value. Try again."
+            )
 
 
-def display_rankings(ranked, w, seats):
+def optional(msg, conv):
+    while True:
+        txt = input(
+            msg + " (blank for none): "
+        ).strip()
 
-    if not ranked:
-        print("\nNo matching offers.")
-        return
+        if not txt:
+            return None
 
-    print("\n=== Ranked Offers ===")
+        try:
+            return conv(txt)
 
-    print(
-        f"Weights: Price {w.price:.0%}, "
-        f"Duration {w.duration:.0%}, "
-        f"Departure time {w.time:.0%}, "
-        f"Ticket flexibility {w.flexibility:.0%}"
-    )
+        except (ValueError, InvalidOperation):
+            print(
+                "Invalid value. Try again."
+            )
 
-    print(
-        f"\n{'#':<4}{'Company':<19}{'ID':<10}"
-        f"{'Departure':<19}{'EUR':>8}"
-        f"{'Min':>7}{'Score':>9}"
-    )
-    print("-" * 76)
 
-    
-    
-    print("\n=== Available Bus Offers Ranked from Best to Worst ===")
+def yesno(msg):
+    while True:
+        val = input(
+            msg + " (y/n): "
+        ).strip().lower()
 
-    for i, r in enumerate(ranked, 1):
-        o = r.offer
+        if val in ("y", "yes"):
+            return True
+
+        if val in ("n", "no"):
+            return False
 
         print(
-            f"\n{i}. {o.company} (Offer ID: {o.offer_id})"
-            f"\n   Departure: {o.departure:%Y-%m-%d at %H:%M}"
-            f"\n   Ticket price: EUR {o.price_eur:.2f}"
-            f"\n   Journey duration: {o.duration_minutes} minutes"
-            f"\n   Overall ranking score: {r.total_score:.1f}/100"
-            f"\n"
-            f"\n   Individual criteria scores:"
-            f"\n   - Ticket price: {r.price_score:.1f}/100"
-            f"\n   - Journey duration: {r.duration_score:.1f}/100"
-            f"\n   - Preferred departure time: {r.time_score:.1f}/100"
-            f"\n   - Ticket changes and refunds: {r.flexibility_score:.1f}/100"
+            "Please enter y or n."
         )
 
 
-    best = ranked[0]
-
-    print("\n=== Recommendation ===")
-    print("Company:", best.offer.company)
-    print("Offer ID:", best.offer.offer_id)
-    print(
-        "Total price: EUR",
-        f"{best.offer.price_eur * seats:.2f}"
-    )
-    print("Score:", f"{best.total_score:.2f}/100")
-    print(explain(best, ranked[1:]))
+def get_request(dsts):
+    names = sorted(dsts)
 
     print(
-        "\nRecommendation is based on the selected "
-        "requirements and weights."
+        "\nDestinations from Madrid:"
+    )
+
+    for i, name in enumerate(names, 1):
+        print(
+            f"{i:2}. {name}"
+        )
+
+    while True:
+        n = ask(
+            "Destination number: ",
+            int
+        )
+
+        if 1 <= n <= len(names):
+            break
+
+        print(
+            "Choose a destination from the list."
+        )
+
+    while True:
+        try:
+            return Request(
+                destination=names[n - 1],
+
+                start=ask(
+                    "First date (YYYY-MM-DD): ",
+                    date.fromisoformat
+                ),
+
+                end=ask(
+                    "Last date (YYYY-MM-DD): ",
+                    date.fromisoformat
+                ),
+
+                budget=optional(
+                    "Maximum price (EUR)",
+                    Decimal
+                ),
+
+                preferred=optional(
+                    "Preferred time (HH:MM)",
+                    time.fromisoformat
+                ),
+
+                max_transfers=optional(
+                    "Maximum transfers",
+                    int
+                ),
+
+                luggage=ask(
+                    "Required luggage items [0]: ",
+                    int,
+                    0
+                ),
+
+                max_minutes=optional(
+                    "Maximum duration (minutes)",
+                    int
+                ),
+
+                changeable=yesno(
+                    "Must be changeable?"
+                ),
+
+                refundable=yesno(
+                    "Must be refundable?"
+                ),
+
+                seats=ask(
+                    "Seats needed [1]: ",
+                    int,
+                    1
+                )
+            )
+
+        except DataError as err:
+            print(
+                f"Invalid request: {err}. "
+                "Please enter it again."
+            )
+
+
+def get_weights(profiles):
+    names = list(profiles)
+
+    print(
+        "\nTraveller profiles:"
+    )
+
+    for i, name in enumerate(names, 1):
+        w = profiles[name]
+
+        print(
+            f"{i}. {name}: "
+            f"price {w.price}%, "
+            f"duration {w.duration}%, "
+            f"time {w.time}%, "
+            f"flexibility {w.flexibility}%"
+        )
+
+    print(
+        f"{len(names) + 1}. Custom weights"
+    )
+
+    while True:
+        n = ask(
+            "Profile number: ",
+            int
+        )
+
+        if 1 <= n <= len(names):
+            return profiles[names[n - 1]]
+
+        if n == len(names) + 1:
+            try:
+                return Weights(
+                    ask("Price %: ", float),
+                    ask("Duration %: ", float),
+                    ask("Departure time %: ", float),
+                    ask("Flexibility %: ", float)
+                )
+
+            except DataError as err:
+                print(err)
+
+        else:
+            print(
+                "Invalid profile number."
+            )
+
+
+def show(rank, companies):
+    print(
+        "\nScores are out of 100; "
+        "highest total ranks first."
+    )
+
+    print(
+        "Hard requirements are checked "
+        "BEFORE these scores."
+    )
+
+    for i, r in enumerate(rank, 1):
+        off = r.offer
+        p = r.points
+
+        print(
+            f"\n{i}. {companies[off.company].name} "
+            f"| {off.id} | Total: {r.total:.1f}"
+        )
+
+        print(
+            f"   {off.depart:%Y-%m-%d %H:%M} "
+            f"to {off.arrive:%Y-%m-%d %H:%M} "
+            f"| EUR {off.price:.2f} "
+            f"| {off.duration} min "
+            f"| {off.transfers} transfers "
+            f"| {off.seats} seats "
+            f"| {off.luggage} luggage "
+            f"| rating {off.rating:.1f}/5"
+        )
+
+        print(
+            f"   Changeable: {off.changeable} "
+            f"| Refundable: {off.refundable}"
+        )
+
+        print(
+            f"   Price {p['price']:.1f} "
+            f"| Duration {p['duration']:.1f} "
+            f"| Time {p['time']:.1f} "
+            f"| Flexibility {p['flexibility']:.1f}"
+        )
+
+    print(
+        "\nRecommendation:",
+        explain(rank, companies)
     )
 
 
-def create_booking(mgr, ranked, req):
+def compare(offers, companies, profiles, booker, req):
+    current = booker.available(offers)
 
-    ans = input("\nBook an offer? (y/n): ").strip().lower()
+    good, why = filter_offers(
+        current,
+        req
+    )
 
-    if ans != "y":
+    print(
+        f"\nSame {len(good)} acceptable offers "
+        "for all profiles."
+    )
+
+    if not good:
+        print(
+            "No matching offers. "
+            "Try different travel requirements."
+        )
         return
 
-    val = input("Ranking number: ").strip()
+    for name, w in profiles.items():
+        rank = rank_offers(
+            good,
+            req,
+            w
+        )
 
-    if not val.isdigit():
-        raise BookingError("Invalid ranking number")
+        print(
+            f"\n=== {name} traveller ==="
+        )
 
-    idx = int(val)
+        print(
+            f"Weights: price {w.price}%, "
+            f"duration {w.duration}%, "
+            f"time {w.time}%, "
+            f"flexibility {w.flexibility}%"
+        )
 
-    if not 1 <= idx <= len(ranked):
-        raise BookingError("Ranking number out of range")
+        print(
+            explain(rank, companies)
+        )
 
-    name = input("Traveller name: ").strip()
+        for i, r in enumerate(rank[:3], 1):
+            print(
+                f"{i}. {companies[r.offer.company].name}: "
+                f"{r.total:.1f}/100"
+            )
 
-    b = mgr.book(
-        ranked[idx - 1].offer,
-        req.seats,
-        name
-    )
 
-    print("\n=== Booking Confirmation ===")
+def menu(offers, companies, dsts, profiles, booker):
+    while True:
+        print(
+            "\n=== BusBidder Spain ==="
+        )
 
-    for key in (
-    "ref", "offer_id", "name",
-    "comp", "dest", "dep",
-    "seats", "price", "payment"
-    ):
-        print(f"{key}: {b[key]}")
+        print(
+            "1. Find, rank and book offers"
+        )
+
+        print(
+            "2. Compare traveller profiles"
+        )
+
+        print(
+            "3. Find an existing booking"
+        )
+
+        print(
+            "0. Exit"
+        )
+
+        choice = input(
+            "Choose: "
+        ).strip()
+
+        if choice == "0":
+            return
+
+        if choice == "3":
+            ref = input(
+                "Booking reference: "
+            ).strip().upper()
+
+            try:
+                b = booker.find(ref)
+
+                if b:
+                    print(b)
+                else:
+                    print(
+                        "No booking found."
+                    )
+
+            except BookingError as err:
+                print(err)
+
+            continue
+
+        if choice not in ("1", "2"):
+            print(
+                "Invalid option."
+            )
+            continue
+
+        req = get_request(dsts)
+
+        if choice == "2":
+            compare(
+                offers,
+                companies,
+                profiles,
+                booker,
+                req
+            )
+            continue
+
+        w = get_weights(profiles)
+
+        current = booker.available(offers)
+
+        good, bad = filter_offers(
+            current,
+            req
+        )
+
+        print(
+            f"\nAcceptable offers: "
+            f"{len(good)} / {len(current)}"
+        )
+
+        print(
+            "Hard-constraint rejections "
+            f"(may overlap): {dict(bad)}"
+        )
+
+        if not good:
+            print(
+                "No matching offers. "
+                "Change the requirements."
+            )
+            continue
+
+        rank = rank_offers(
+            good,
+            req,
+            w
+        )
+
+        show(
+            rank,
+            companies
+        )
+
+        if not yesno(
+            "Book one of these offers?"
+        ):
+            continue
+
+        n = ask(
+            "Rank number (0 to cancel): ",
+            int
+        )
+
+        if n == 0:
+            continue
+
+        if not 1 <= n <= len(rank):
+            print(
+                "Invalid rank number."
+            )
+            continue
+
+        try:
+            name = ask(
+                "Passenger name: "
+            )
+
+            b = booker.book(
+                rank[n - 1].offer,
+                name,
+                req.seats
+            )
+
+            print(
+                "\n=== Booking confirmation "
+                "(simulated payment) ==="
+            )
+
+            for k, v in b.items():
+                print(
+                    f"{k}: {v}"
+                )
+
+            print(
+                "No payment details were collected."
+            )
+
+        except BookingError as err:
+            print(
+                f"Booking failed: {err}"
+            )
 
 
 def main():
-
-    OUT.mkdir(parents=True, exist_ok=True)
+    (ROOT / "logs").mkdir(
+        exist_ok=True
+    )
 
     logging.basicConfig(
-        filename=OUT / "busbidder.log",
+        filename=ROOT / "logs" / "busbidder.log",
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s"
     )
 
-    print("=== BusBidder Spain ===")
-
     try:
-        offers, rejected = load_offers(DATA)
+        companies, dsts, offers, bad = load_data(
+            ROOT / "data"
+        )
 
-    except (OSError, ValueError) as e:
-        print("Dataset error:", e)
-        return
+        profiles = load_profiles(
+            ROOT / "data" / "profiles.json"
+        )
 
-    print("Valid records:", len(offers))
-    print("Rejected records:", len(rejected))
-    print(
-        "Available offers:",
-        sum(o.available_seats > 0 for o in offers)
-    )
+        booker = Booker(
+            ROOT / "output" / "bookings.sqlite3",
+            offers
+        )
 
-    mgr = BookingManager(OUT / "bookings.json")
+        print(
+            f"Loaded {len(offers)} valid offers; "
+            f"rejected {bad} invalid rows."
+        )
 
-    while True:
+        print(
+            f"Companies: {len(companies)}; "
+            f"destinations: {len(dsts)}"
+        )
 
-        try:
-            display_requests()
-
-            n = input("\nSelect request: ").strip()
-
-            if n == "0":
-                break
-
-            name, req = select_request(n)
-
-            display_profiles()
-
-            n = input("\nSelect profile: ").strip()
-
-            profile, w = select_profile(n)
-
-            display_request(name, req, profile)
-
-            remaining = mgr.remaining(offers)
-
-            valid = filter_offers(
-                offers, req, remaining
+        if "--compare" in sys.argv:
+            req = Request(
+                "Malaga",
+                date(2026, 11, 12),
+                date(2026, 11, 12),
+                preferred=time(9),
+                max_transfers=2,
+                luggage=1
             )
 
-            print("\nMatching offers:", len(valid))
-
-            ranked = rank_offers(
-                valid, w, req.pref_t
+            compare(
+                offers,
+                companies,
+                profiles,
+                booker,
+                req
             )
 
-            display_rankings(
-                ranked, w, req.seats
+        else:
+            menu(
+                offers,
+                companies,
+                dsts,
+                profiles,
+                booker
             )
 
-            if ranked:
-                create_booking(mgr, ranked, req)
+    except (
+        DataError,
+        sqlite3.Error,
+        OSError
+    ) as err:
 
-        except (
-            RequestValidationError,
-            BookingError,
-            ValueError
-        ) as e:
+        logging.exception(
+            "Application failed"
+        )
 
-            print("\nError:", e)
-            logging.warning(
-                "Application error: %s", e
-            )
-
-        except (KeyboardInterrupt, EOFError):
-            print("\nProgram interrupted.")
-            break
-
-    print("\nGoodbye!")
+        print(
+            f"Error: {err}"
+        )
 
 
 if __name__ == "__main__":
