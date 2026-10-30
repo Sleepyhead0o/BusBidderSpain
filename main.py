@@ -11,6 +11,8 @@ from busbidder.booking import Booker
 from busbidder.market import (
     explain,
     filter_offers,
+    get_bounds,
+    get_time_bounds,
     load_data,
     load_profiles,
     rank_offers
@@ -264,7 +266,7 @@ def show(rank, companies):
     )
 
 
-def compare(offers, companies, profiles, booker, req):
+def compare(offers, companies, profiles, booker, req, bounds, time_bounds):
     current = booker.available(offers)
 
     good, why = filter_offers(
@@ -288,7 +290,9 @@ def compare(offers, companies, profiles, booker, req):
         rank = rank_offers(
             good,
             req,
-            w
+            w,
+            bounds,
+            time_bounds
         )
 
         print(
@@ -313,7 +317,7 @@ def compare(offers, companies, profiles, booker, req):
             )
 
 
-def menu(offers, companies, dsts, profiles, booker):
+def menu(offers, companies, dsts, profiles, booker, bounds):
     while True:
         print(
             "\n=== BusBidder Spain ==="
@@ -369,6 +373,7 @@ def menu(offers, companies, dsts, profiles, booker):
             continue
 
         req = get_request(dsts)
+        time_bounds = get_time_bounds(offers, req.preferred)
 
         if choice == "2":
             compare(
@@ -376,7 +381,9 @@ def menu(offers, companies, dsts, profiles, booker):
                 companies,
                 profiles,
                 booker,
-                req
+                req,
+                bounds,
+                time_bounds
             )
             continue
 
@@ -409,7 +416,9 @@ def menu(offers, companies, dsts, profiles, booker):
         rank = rank_offers(
             good,
             req,
-            w
+            w,
+            bounds,
+            time_bounds
         )
 
         show(
@@ -483,6 +492,8 @@ def main():
             ROOT / "data"
         )
 
+        bounds = get_bounds(offers)
+
         profiles = load_profiles(
             ROOT / "data" / "profiles.json"
         )
@@ -512,12 +523,15 @@ def main():
                 luggage=1
             )
 
+            time_bounds = get_time_bounds(offers, req.preferred)
             compare(
                 offers,
                 companies,
                 profiles,
                 booker,
-                req
+                req,
+                bounds,
+                time_bounds
             )
 
         else:
@@ -526,7 +540,8 @@ def main():
                 companies,
                 dsts,
                 profiles,
-                booker
+                booker,
+                bounds
             )
 
     except (

@@ -12,6 +12,9 @@ from busbidder.booking import Booker
 
 from busbidder.market import (
     filter_offers,
+    get_bounds,
+    get_time_bounds,
+    time_gap,
     load_data,
     load_profiles,
     parse_offer,
@@ -37,6 +40,8 @@ class TestBusBidder(unittest.TestCase):
             DATA
         )
 
+        cls.bounds = get_bounds(cls.offers)
+
         cls.profiles = load_profiles(
             DATA / "profiles.json"
         )
@@ -49,6 +54,8 @@ class TestBusBidder(unittest.TestCase):
             max_transfers=2,
             luggage=1
         )
+
+        cls.time_bounds = get_time_bounds(cls.offers, cls.req.preferred)
 
         cls.good, _ = filter_offers(
             cls.offers,
@@ -250,13 +257,17 @@ class TestBusBidder(unittest.TestCase):
         a = rank_offers(
             self.good,
             self.req,
-            w
+            w,
+            self.bounds,
+            self.time_bounds
         )
 
         b = rank_offers(
             list(reversed(self.good)),
             self.req,
-            w
+            w,
+            self.bounds,
+            self.time_bounds
         )
 
         self.assertEqual(
@@ -271,12 +282,97 @@ class TestBusBidder(unittest.TestCase):
             )
         )
 
+    def test_global_min_max(self):
+        self.assertEqual(
+            self.bounds["price"],
+            (
+                min(float(off.price) for off in self.offers),
+                max(float(off.price) for off in self.offers)
+            )
+        )
+
+        self.assertEqual(
+            self.bounds["duration"],
+            (
+                min(off.duration for off in self.offers),
+                max(off.duration for off in self.offers)
+            )
+        )
+
+    def test_scores_do_not_depend_on_filtered_set(self):
+        w = Weights(50, 50, 0, 0)
+        off = self.good[0]
+
+        alone = rank_offers(
+            [off], self.req, w, self.bounds, self.time_bounds
+        )[0]
+
+        together = next(
+            r for r in rank_offers(
+                self.good, self.req, w, self.bounds, self.time_bounds
+            )
+            if r.offer.id == off.id
+        )
+
+        self.assertEqual(alone.points, together.points)
+        self.assertAlmostEqual(alone.total, together.total)
+
+    def test_equal_bounds_are_handled(self):
+        off = self.good[0]
+        bounds = get_bounds([off])
+        w = Weights(50, 50, 0, 0)
+
+        r = rank_offers(
+            [off], self.req, w, bounds,
+            get_time_bounds([off], self.req.preferred)
+        )[0]
+        self.assertEqual(r.points["price"], 100.0)
+        self.assertEqual(r.points["duration"], 100.0)
+
+    def test_time_bounds_use_complete_dataset(self):
+        gaps = [time_gap(off, self.req.preferred) for off in self.offers]
+        self.assertEqual(self.time_bounds, (min(gaps), max(gaps)))
+
+    def test_time_score_does_not_depend_on_filtered_offers(self):
+        w = Weights(0, 0, 100, 0)
+        off = self.good[0]
+        alone = rank_offers(
+            [off], self.req, w, self.bounds, self.time_bounds
+        )[0]
+        together = next(
+            r for r in rank_offers(
+                self.good, self.req, w, self.bounds, self.time_bounds
+            ) if r.offer.id == off.id
+        )
+        self.assertEqual(alone.points["time"], together.points["time"])
+
+    def test_preferred_time_changes_bounds(self):
+        other = time(22, 0)
+        other_bounds = get_time_bounds(self.offers, other)
+        self.assertNotEqual(self.time_bounds, other_bounds)
+
+    def test_no_preferred_time_uses_neutral_score(self):
+        req = replace(self.req, preferred=None)
+        self.assertIsNone(get_time_bounds(self.offers, req.preferred))
+        w = Weights(0, 0, 100, 0)
+        rank = rank_offers(self.good, req, w, self.bounds, None)
+        self.assertTrue(all(r.points["time"] == 50.0 for r in rank))
+
+    def test_equal_time_gaps_receive_same_score(self):
+        off = self.good[0]
+        time_bounds = get_time_bounds([off], self.req.preferred)
+        w = Weights(0, 0, 100, 0)
+        rank = rank_offers([off], self.req, w, self.bounds, time_bounds)
+        self.assertEqual(rank[0].points["time"], 100.0)
+
     def test_profiles_can_differ(self):
         winners = {
             name: rank_offers(
                 self.good,
                 self.req,
-                w
+                w,
+                self.bounds,
+                self.time_bounds
             )[0].offer.company
 
             for name, w in self.profiles.items()

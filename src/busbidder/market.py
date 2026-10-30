@@ -371,38 +371,71 @@ def clamp(n):
     )
 
 
-def rank_offers(offers, req, w):
+def get_bounds(offers):
+    # Calculate limits once from all valid, unfiltered offers.
+    if not offers:
+        raise DataError("No offers available for normalization.")
+
+    return {
+        "price": (
+            min(float(off.price) for off in offers),
+            max(float(off.price) for off in offers)
+        ),
+        "duration": (
+            min(off.duration for off in offers),
+            max(off.duration for off in offers)
+        )
+    }
+
+
+def norm_low(value, low, high):
+    # A smaller price or shorter duration receives more points.
+    if low == high:
+        return 100.0
+
+    return clamp(
+        100 * (high - float(value)) / (high - low)
+    )
+
+
+def time_gap(off, preferred):
+    # Shortest circular difference on a 24-hour clock, in minutes.
+    a = off.depart.hour * 60 + off.depart.minute
+    b = preferred.hour * 60 + preferred.minute
+    gap = abs(a - b)
+    return min(gap, 1440 - gap)
+
+
+def get_time_bounds(offers, preferred):
+    # Calculated once per request from ALL valid (unfiltered) offers.
+    if preferred is None:
+        return None
+
+    if not offers:
+        raise DataError("No offers available for normalization.")
+
+    gaps = [time_gap(off, preferred) for off in offers]
+    return min(gaps), max(gaps)
+
+
+def rank_offers(offers, req, w, bounds, time_bounds):
     rank = []
 
-    for off in offers:
-        p = clamp(
-            100 * (1 - float(off.price) / 150)
-        )
+    p_min, p_max = bounds["price"]
+    d_min, d_max = bounds["duration"]
 
-        d = clamp(
-            100 * (1 - off.duration / 900)
-        )
+    if req.preferred is not None and time_bounds is None:
+        raise DataError("Departure-time bounds are required.")
+
+    for off in offers:
+        p = norm_low(off.price, p_min, p_max)
+        d = norm_low(off.duration, d_min, d_max)
 
         if req.preferred is None:
             t = 50.0
-
         else:
-            a = (
-                off.depart.hour * 60
-                + off.depart.minute
-            )
-
-            b = (
-                req.preferred.hour * 60
-                + req.preferred.minute
-            )
-
-            dt = abs(a - b)
-            dt = min(dt, 1440 - dt)
-
-            t = clamp(
-                100 * (1 - dt / 720)
-            )
+            dt = time_gap(off, req.preferred)
+            t = norm_low(dt, *time_bounds)
 
         f = 50.0 * (
             int(off.changeable)
@@ -450,7 +483,7 @@ def explain(rank, companies):
         pros.append("direct journey")
 
     if top.points["time"] >= 85:
-        pros.append("convenient departure")
+        pros.append("relatively convenient departure")
 
     if off.changeable and off.refundable:
         pros.append(
