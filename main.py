@@ -14,7 +14,7 @@ from busbidder.market import (
     get_bounds,
     get_time_bounds,
     load_data,
-    load_profiles,
+    loading_profiles,
     rank_offers
 )
 
@@ -102,7 +102,7 @@ def get_request(dsts):
             break
 
         print(
-            "Choose a destination from the list."
+            "Choose a destination from the list"
         )
 
     while True:
@@ -141,7 +141,7 @@ def get_request(dsts):
                     0
                 ),
 
-                max_minutes=optional(
+                max_dur=optional(
                     "Maximum duration (minutes)",
                     int
                 ),
@@ -494,7 +494,7 @@ def main():
 
         bounds = get_bounds(offers)
 
-        profiles = load_profiles(
+        profiles = loading_profiles(
             ROOT / "data" / "profiles.json"
         )
 

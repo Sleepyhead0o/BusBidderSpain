@@ -111,15 +111,11 @@ def parse_offer(row, companies, destinations):
         price = Decimal(row["price"])
         rating = float(row["rating"])
 
-        if not price.is_finite() or price <= 0:
-            raise DataError(
-                "Price must be positive."
-            )
+        if price <= 0 or not price.is_finite():
+            raise DataError("Price must be positive")
 
         if not math.isfinite(rating) or not 1 <= rating <= 5:
-            raise DataError(
-                "Rating must be from 1 to 5."
-            )
+            raise DataError("Invalid rating, since the number must be between 1 and 5")
 
         eco = (row.get("emissions") or "").strip()
 
@@ -284,7 +280,7 @@ def load_data(folder):
     return companies, destinations, offers, len(bad)
 
 
-def load_profiles(path):
+def loading_profiles(path):
     try:
         with path.open(encoding="utf-8") as f:
             cfg = json.load(f)
@@ -336,8 +332,8 @@ def reasons(off, req):
     if off.luggage < req.luggage:
         bad.append("luggage")
 
-    if req.max_minutes is not None:
-        if off.duration > req.max_minutes:
+    if req.max_dur is not None:
+        if off.duration > req.max_dur:
             bad.append("duration")
 
     if req.changeable and not off.changeable:
@@ -388,7 +384,7 @@ def get_bounds(offers):
     }
 
 
-def norm_low(value, low, high):
+def normalise(value, low, high):
     # A smaller price or shorter duration receives more points.
     if low == high:
         return 100.0
@@ -399,11 +395,16 @@ def norm_low(value, low, high):
 
 
 def time_gap(off, preferred):
-    # Shortest circular difference on a 24-hour clock, in minutes.
+    # Measure time difference between bus departure time and users preferred one
     a = off.depart.hour * 60 + off.depart.minute
     b = preferred.hour * 60 + preferred.minute
+
     gap = abs(a - b)
-    return min(gap, 1440 - gap)
+
+    if gap > 720:
+        gap = 1440 - gap
+
+    return gap
 
 
 def get_time_bounds(offers, preferred):
@@ -428,14 +429,14 @@ def rank_offers(offers, req, w, bounds, time_bounds):
         raise DataError("Departure-time bounds are required.")
 
     for off in offers:
-        p = norm_low(off.price, p_min, p_max)
-        d = norm_low(off.duration, d_min, d_max)
+        p = normalise(off.price, p_min, p_max)
+        d = normalise(off.duration, d_min, d_max)
 
         if req.preferred is None:
             t = 50.0
         else:
             dt = time_gap(off, req.preferred)
-            t = norm_low(dt, *time_bounds)
+            t = normalise(dt, *time_bounds)
 
         f = 50.0 * (
             int(off.changeable)

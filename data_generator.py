@@ -36,9 +36,9 @@ DESTINATIONS = [
 ]
 
 
-# Departure, duration multiplier, price multiplier,
-# transfers, luggage, changeable, refundable,
-# rating, emissions multiplier.
+# STYLE defines each company's departure time, duration and price multipliers,
+# number of transfers, luggage allowance, ticket change and refund options,
+# rating, and emissions multiplier
 
 STYLE = {
     "SR": (

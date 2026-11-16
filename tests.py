@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from dataclasses import replace
 from datetime import date, time
@@ -16,7 +17,7 @@ from busbidder.market import (
     get_time_bounds,
     time_gap,
     load_data,
-    load_profiles,
+    loading_profiles,
     parse_offer,
     rank_offers,
     reasons
@@ -34,6 +35,12 @@ class TestBusBidder(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        # The current date is fixed for reproducible tests 
+        date_patcher = patch("busbidder.models.date", wraps=date)
+        mocked_date = date_patcher.start()
+        cls.addClassCleanup(date_patcher.stop)
+        mocked_date.today.return_value = date(2026, 11, 12)
+
         generate()
 
         cls.companies, cls.dsts, cls.offers, cls.bad = load_data(
@@ -42,7 +49,7 @@ class TestBusBidder(unittest.TestCase):
 
         cls.bounds = get_bounds(cls.offers)
 
-        cls.profiles = load_profiles(
+        cls.profiles = loading_profiles(
             DATA / "profiles.json"
         )
 
@@ -135,7 +142,7 @@ class TestBusBidder(unittest.TestCase):
             budget=Decimal("1"),
             max_transfers=0,
             luggage=10,
-            max_minutes=1,
+            max_dur=1,
             seats=100,
             changeable=True,
             refundable=True
@@ -243,6 +250,39 @@ class TestBusBidder(unittest.TestCase):
             Weights(
                 40, 20, 20, 10
             )
+
+    def test_past_travel_date_rejected(self):
+        with self.assertRaises(DataError):
+            Request(
+                "Malaga",
+                date(2026, 11, 11),
+                date(2026, 11, 12)
+            )
+
+    def test_today_travel_date_accepted(self):
+        req = Request(
+            "Malaga",
+            date(2026, 11, 12),
+            date(2026, 11, 12)
+        )
+
+        self.assertEqual(
+            req.start,
+            date(2026, 11, 12)
+        )
+
+    def test_future_travel_date_accepted(self):
+        req = Request(
+            "Malaga",
+            date(2026, 11, 13),
+            date(2026, 11, 13)
+        )
+
+        self.assertEqual(
+            req.start,
+            date(2026, 11, 13)
+        )
+
 
     def test_invalid_request(self):
         with self.assertRaises(DataError):

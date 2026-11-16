@@ -55,7 +55,7 @@ class Request:
     preferred: time | None = None
     max_transfers: int | None = None
     luggage: int = 0
-    max_minutes: int | None = None
+    max_dur: int | None = None
     changeable: bool = False
     refundable: bool = False
     seats: int = 1
@@ -63,30 +63,35 @@ class Request:
     def __post_init__(self):
         if not self.destination or self.start > self.end:
             raise DataError(
-                "Destination or travel dates are invalid."
+                "Destination or travel dates are invalid"
             )
 
+        if self.start < date.today():
+            raise DataError(
+                "Travel date cannot be in the past"
+            )
+        
         if self.budget is not None:
             if not self.budget.is_finite() or self.budget <= 0:
                 raise DataError(
-                    "Budget must be positive."
+                    "Budget must be positive"
                 )
 
         if self.max_transfers is not None:
             if self.max_transfers < 0:
                 raise DataError(
-                    "Maximum transfers cannot be negative."
+                    "Maximum transfers cannot be negative"
                 )
 
-        if self.max_minutes is not None:
-            if self.max_minutes <= 0:
+        if self.max_dur is not None:
+            if self.max_dur <= 0:
                 raise DataError(
-                    "Maximum duration must be positive."
+                    "Max duration must be positive"
                 )
 
         if self.luggage < 0 or self.seats < 1:
             raise DataError(
-                "Luggage or seat count is invalid."
+                "Luggage or seat count is invalid"
             )
 
 
@@ -110,12 +115,12 @@ class Weights:
             for v in vals
         ):
             raise DataError(
-                "Weights must be nonnegative numbers."
+                "Weights must be non-negative numbers"
             )
 
         if abs(sum(vals) - 100) > 0.000001:
             raise DataError(
-                "Weights must add up to 100%."
+                "Weights must add up to 100%"
             )
 
 
