@@ -1,6 +1,8 @@
 # BusBidderSpain
 
 ## How to run:
+git clone git@github.com:Sleepyhead0o/BusBidderSpain.git <br/>
+cd BusBidderSpain <br/>
 conda env create -f env.yml <br/>
 conda activate busbidder <br/>
 python -m pip install -e . <br/>
