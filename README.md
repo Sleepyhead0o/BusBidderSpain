@@ -6,11 +6,6 @@ conda activate busbidder <br/>
 python -m pip install -e . <br/>
 python data_generator.py <br/>
 python main.py <br/>
-
-Compare the predefined traveller profiles directly: <br/>
-python main.py --compare <br/>
-
-Run the unit tests<br/>
 python -m unittest tests -v <br/>
 
 ## The project structure:
