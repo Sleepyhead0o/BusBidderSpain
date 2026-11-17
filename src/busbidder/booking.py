@@ -1,3 +1,4 @@
+
 import logging
 import re
 import secrets
@@ -8,7 +9,7 @@ from dataclasses import replace
 from datetime import datetime
 
 
-REF = re.compile(
+REF_REG = re.compile(
     r"BBS-\d{8}-[A-F0-9]{8}$"
 )
 
@@ -18,16 +19,16 @@ from .models import BookingError
 
 class Booker:
 
-    def __init__(self, path, offers):
-        self.path = path
+    def __init__(self, sti, tilbud):
+        self.sti = sti
 
-        path.parent.mkdir(
+        sti.parent.mkdir(
             parents=True,
             exist_ok=True
         )
 
-        with self.db() as db:
-            db.execute(
+        with self.apne_db() as kobling:
+            kobling.execute(
                 """
                 CREATE TABLE IF NOT EXISTS seats (
                     id TEXT PRIMARY KEY,
@@ -36,7 +37,7 @@ class Booker:
                 """
             )
 
-            db.execute(
+            kobling.execute(
                 """
                 CREATE TABLE IF NOT EXISTS bookings (
                     ref TEXT PRIMARY KEY,
@@ -51,105 +52,105 @@ class Booker:
                 """
             )
 
-            db.executemany(
+            kobling.executemany(
                 "INSERT OR IGNORE INTO seats VALUES (?, ?)",
                 [
-                    (off.id, off.seats)
-                    for off in offers
+                    (tur.id, tur.seats)
+                    for tur in tilbud
                 ]
             )
 
     @contextmanager
-    def db(self):
-        db = sqlite3.connect(self.path)
-        db.row_factory = sqlite3.Row
+    def apne_db(self):
+        kobling = sqlite3.connect(self.sti)
+        kobling.row_factory = sqlite3.Row
 
         try:
-            with db:
-                yield db
+            with kobling:
+                yield kobling
 
         finally:
-            db.close()
+            kobling.close()
 
-    def available(self, offers):
-        with self.db() as db:
-            cur = {
-                row["id"]: row["qty"]
-                for row in db.execute(
+    def ledige_seter(self, tilbud):     # seat availability 
+        with self.apne_db() as kobling:
+            treff = {
+                rad["id"]: rad["qty"]
+                for rad in kobling.execute(
                     "SELECT id, qty FROM seats"
                 )
             }
 
         return [
             replace(
-                off,
-                seats=cur[off.id]
+                tur,
+                seats=treff[tur.id]
             )
-            for off in offers
+            for tur in tilbud
         ]
 
-    def book(self, off, name, qty):
-        name = name.strip()
+    def lag_bestilling(self, tur, navn, antall):        # create booking
+        navn = navn.strip()
 
         if (
-            not name
-            or len(name) > 80
-            or not isinstance(qty, int)
-            or isinstance(qty, bool)
-            or qty < 1
+            not navn
+            or len(navn) > 80
+            or not isinstance(antall, int)
+            or isinstance(antall, bool)
+            or antall < 1
         ):
             raise BookingError(
                 "Invalid passenger name or seat count."
             )
 
-        now = datetime.now().isoformat(
+        naa = datetime.now().isoformat(
             timespec="seconds"
         )
 
-        ref = (
+        kode = (
             f"BBS-{datetime.now():%Y%m%d}-"
             f"{secrets.token_hex(4).upper()}"
         )
 
-        total = str(
-            off.price * qty
+        belop = str(
+            tur.price * antall
         )
 
         try:
-            with self.db() as db:
-                db.execute(
+            with self.apne_db() as kobling:
+                kobling.execute(
                     "BEGIN IMMEDIATE"
                 )
 
-                cur = db.execute(
+                treff = kobling.execute(
                     """
                     UPDATE seats
                     SET qty = qty - ?
                     WHERE id = ?
                     AND qty >= ?
                     """,
-                    (qty, off.id, qty)
+                    (antall, tur.id, antall)
                 )
 
-                if cur.rowcount != 1:
+                if treff.rowcount != 1:
                     raise BookingError(
                         "Not enough seats available."
                     )
 
-                db.execute(
+                kobling.execute(
                     """
                     INSERT INTO bookings
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        ref,
-                        off.id,
-                        name,
-                        qty,
-                        total,
-                        int(off.changeable),
-                        int(off.refundable),
-                        now
+                        kode,
+                        tur.id,
+                        navn,
+                        antall,
+                        belop,
+                        int(tur.changeable),
+                        int(tur.refundable),
+                        naa
                     )
                 )
 
@@ -160,29 +161,29 @@ class Booker:
 
         logging.info(
             "Booked %s, offer %s, seats %d",
-            ref,
-            off.id,
-            qty
+            kode,
+            tur.id,
+            antall
         )
 
-        return self.find(ref)
+        return self.finn_bestilling(kode)       # gets new booking details with referance
 
-    def find(self, ref):
-        if not REF.fullmatch(ref):
+    def finn_bestilling(self, kode):            # find booking
+        if not REF_REG.fullmatch(kode):
             raise BookingError(
-                "Invalid booking reference."
+                "Invalid booking reference"
             )
 
-        with self.db() as db:
-            row = db.execute(
+        with self.apne_db() as kobling:
+            rad = kobling.execute(
                 """
                 SELECT * FROM bookings
                 WHERE ref = ?
                 """,
-                (ref,)
+                (kode,)
             ).fetchone()
 
-        if row:
-            return dict(row)
+        if rad:     # row
+            return dict(rad)
 
         return None

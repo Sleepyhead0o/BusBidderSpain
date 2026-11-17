@@ -1,3 +1,4 @@
+
 import csv
 import json
 
@@ -5,10 +6,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 
-DATA = Path(__file__).resolve().parent / "data"
+DATAMAPPE = Path(__file__).resolve().parent / "data"        # Data-folder
 
 
-COMPANIES = [
+SELSKAPER = [       # Companies
     ("SR", "SolRuta", "Low-cost daytime journeys"),
     ("CE", "Camino Express", "Fast direct journeys"),
     ("CL", "CostaLink", "Coastal connections"),
@@ -17,7 +18,7 @@ COMPANIES = [
 ]
 
 
-DESTINATIONS = [
+REISEMAAL = [       # Destinations
     ("Barcelona", 500, 58),
     ("Valencia", 310, 38),
     ("Seville", 410, 39),
@@ -36,17 +37,15 @@ DESTINATIONS = [
 ]
 
 
-# STYLE defines each company's departure time, duration and price multipliers,
-# number of transfers, luggage allowance, ticket change and refund options,
-# rating, and emissions multiplier
-
-STYLE = {
-    "SR": (
+# Company settings: departure time, duration and price multipliers,
+# transfers, luggage, changeable, refundable, rating and emissions
+STIL = {
+    "SR": (     # SolRuta
         "07:30", 1.18, 0.70, 1, 1,
         False, False, 3.8, 1.0
     ),
 
-    "CE": (
+    "CE": (     # Camino Express
         "09:15", 0.78, 1.68, 0, 1,
         True, False, 4.5, 0.9
     ),
@@ -68,7 +67,8 @@ STYLE = {
 }
 
 
-COLS = [
+# Columns
+KOLONNER = [
     "offer_id",
     "company",
     "origin",
@@ -87,128 +87,137 @@ COLS = [
 ]
 
 
-def write_csv(path, cols, vals):
-    with path.open(
+# Write CSV (path, columns, values)
+def skriv_csv(sti, kolonner, verdier):
+    with sti.open(
         "w",
         newline="",
         encoding="utf-8"
-    ) as f:
+    ) as fil:
 
-        wr = csv.DictWriter(
-            f,
-            fieldnames=cols
+        skriver = csv.DictWriter(       # writer
+            fil,
+            fieldnames=kolonner
         )
 
-        wr.writeheader()
-        wr.writerows(vals)
+        skriver.writeheader()
+        skriver.writerows(verdier)
 
 
-def generate():
-    DATA.mkdir(
+# Generate data
+def lag_data():
+    DATAMAPPE.mkdir(
         exist_ok=True
     )
 
-    write_csv(
-        DATA / "companies.csv",
+    skriv_csv(
+        DATAMAPPE / "companies.csv",
         ["code", "name", "description"],
         [
             dict(
                 zip(
                     ["code", "name", "description"],
-                    co
+                    sels
                 )
             )
-            for co in COMPANIES
+            for sels in SELSKAPER
         ]
     )
 
-    write_csv(
-        DATA / "destinations.csv",
+    skriv_csv(
+        DATAMAPPE / "destinations.csv",
         ["name"],
         [
-            {"name": name}
-            for name, _, _ in DESTINATIONS
+            {"name": navn}              # name
+            for navn, _, _ in REISEMAAL
         ]
     )
 
-    offers = []
+    tilbud = []                         # offers
 
-    def add(
-        co, dst, day, mins, price, hour,
-        tr, bag, ch, rf, rt, eco
+    # Add journey (company, destination, day, minutes, price, time,
+    # transfers, luggage, changeable, refundable, rating, emissions)
+    def legg_til_tur(
+        sels, maal, dag, minutter, pris, klokke,
+        bytter, bagasje, kan_endres, kan_refunderes,
+        vurdering, utslipp
     ):
-        dep = datetime.fromisoformat(
-            f"{day}T{hour}"
+        avgang = datetime.fromisoformat(    # departure
+            f"{dag}T{klokke}"
         )
 
-        arr = dep + timedelta(
-            minutes=mins
+        ankomst = avgang + timedelta(       #arrival
+            minutes=minutter
         )
 
-        offers.append({
-            "offer_id": f"OF-{len(offers) + 1:04d}",
-            "company": co,
+        tilbud.append({
+            "offer_id": f"OF-{len(tilbud) + 1:04d}",
+            "company": sels,
             "origin": "Madrid",
-            "destination": dst,
-            "depart": dep.isoformat(
+            "destination": maal,
+            "depart": avgang.isoformat(
                 timespec="minutes"
             ),
-            "arrive": arr.isoformat(
+            "arrive": ankomst.isoformat(
                 timespec="minutes"
             ),
-            "minutes": mins,
-            "price": f"{price:.2f}",
-            "transfers": tr,
-            "luggage": bag,
-            "changeable": str(ch).lower(),
-            "refundable": str(rf).lower(),
+            "minutes": minutter,
+            "price": f"{pris:.2f}",
+            "transfers": bytter,
+            "luggage": bagasje,
+            "changeable": str(kan_endres).lower(),
+            "refundable": str(kan_refunderes).lower(),
             "seats": 18,
-            "rating": rt,
-            "emissions": f"{eco:.2f}"
+            "rating": vurdering,
+            "emissions": f"{utslipp:.2f}"
         })
 
-    for day in (
+    for dag in (
         "2026-11-12",
         "2026-11-13"
     ):
-        for dst, mins, price in DESTINATIONS:
-            for co in STYLE:
+        for maal, minutter, pris in REISEMAAL:
+            for sels in STIL:
 
+                # tid_faktor = duration multiplier
+                # pris_faktor = price multiplier
                 (
-                    hour, dm, pm, tr, bag,
-                    ch, rf, rt, eco
-                ) = STYLE[co]
+                    klokke, tid_faktor, pris_faktor, bytter, bagasje,
+                    kan_endres, kan_refunderes, vurdering, utslipp
+                ) = STIL[sels]
 
-                add(
-                    co,
-                    dst,
-                    day,
-                    round(mins * dm),
-                    price * pm,
-                    hour,
-                    tr,
-                    bag,
-                    ch,
-                    rf,
-                    rt,
-                    mins * 0.025 * eco
+                legg_til_tur(
+                    sels,
+                    maal,
+                    dag,
+                    round(minutter * tid_faktor),
+                    pris * pris_faktor,
+                    klokke,
+                    bytter,
+                    bagasje,
+                    kan_endres,
+                    kan_refunderes,
+                    vurdering,
+                    minutter * 0.025 * utslipp
                 )
 
-    add(
+    # add offers 
+    legg_til_tur(
         "SR", "Malaga", "2026-11-12",
         520, 27, "14:15",
         1, 1, False, False, 3.8, 12
     )
 
-    add(
+    legg_til_tur(
         "CE", "Malaga", "2026-11-12",
         350, 76, "08:45",
         0, 1, True, False, 4.6, 8
     )
 
-    bad = []
+    avvist = []             #rejected offers
 
-    changes = [
+    # changes -> invalid offers
+    endringer = [
         {"offer_id": "INVALID"},
 
         {
@@ -256,18 +265,19 @@ def generate():
         }
     ]
 
-    for fix in changes:
-        row = offers[0].copy()
-        row.update(fix)
-        bad.append(row)
+    for endring in endringer:            # change
+        rad = tilbud[0].copy()            # row
+        rad.update(endring)
+        avvist.append(rad)
 
-    write_csv(
-        DATA / "offers.csv",
-        COLS,
-        offers + bad
+    skriv_csv(
+        DATAMAPPE / "offers.csv",
+        KOLONNER,
+        tilbud + avvist
     )
 
-    profiles = {
+    # traveller-profiles
+    profiler = {
         "Budget": {
             "price": 80,
             "duration": 12,
@@ -291,20 +301,20 @@ def generate():
     }
 
     (
-        DATA / "profiles.json"
+        DATAMAPPE / "profiles.json"
     ).write_text(
         json.dumps(
-            profiles,
+            profiler,
             indent=2
         ),
         encoding="utf-8"
     )
 
     print(
-        f"Created {len(offers)} valid "
-        f"and {len(bad)} invalid offers."
+        f"Created {len(tilbud)} valid "
+        f"and {len(avvist)} invalid offers."
     )
 
 
 if __name__ == "__main__":
-    generate()
+    lag_data()

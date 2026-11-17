@@ -1,26 +1,26 @@
+
 import tempfile
 import unittest
-from unittest.mock import patch
 
 from dataclasses import replace
 from datetime import date, time
 from decimal import Decimal
 from pathlib import Path
 
-from data_generator import DATA, generate
+from data_generator import DATAMAPPE, lag_data
 
 from busbidder.booking import Booker
 
 from busbidder.market import (
-    filter_offers,
-    get_bounds,
-    get_time_bounds,
-    time_gap,
-    load_data,
-    loading_profiles,
-    parse_offer,
-    rank_offers,
-    reasons
+    finn_tilbud,
+    poenggrenser,
+    tidsgrenser,
+    tidsavstand,
+    last_marked,
+    last_profiler,
+    lag_tilbud,
+    ranger_tilbud,
+    sjekk_tilbud
 )
 
 from busbidder.models import (
@@ -33,27 +33,22 @@ from busbidder.models import (
 
 class TestBusBidder(unittest.TestCase):
 
+    # set up test data
     @classmethod
     def setUpClass(cls):
-        # The current date is fixed for reproducible tests 
-        date_patcher = patch("busbidder.models.date", wraps=date)
-        mocked_date = date_patcher.start()
-        cls.addClassCleanup(date_patcher.stop)
-        mocked_date.today.return_value = date(2026, 11, 12)
+        lag_data()
 
-        generate()
-
-        cls.companies, cls.dsts, cls.offers, cls.bad = load_data(
-            DATA
+        cls.selskaper, cls.reisemaal, cls.tilbud, cls.avvist = last_marked(
+            DATAMAPPE
         )
 
-        cls.bounds = get_bounds(cls.offers)
+        cls.grenser = poenggrenser(cls.tilbud)
 
-        cls.profiles = loading_profiles(
-            DATA / "profiles.json"
+        cls.profiler = last_profiler(
+            DATAMAPPE / "profiles.json"
         )
 
-        cls.req = Request(
+        cls.krav = Request(
             "Malaga",
             date(2026, 11, 12),
             date(2026, 11, 12),
@@ -62,55 +57,62 @@ class TestBusBidder(unittest.TestCase):
             luggage=1
         )
 
-        cls.time_bounds = get_time_bounds(cls.offers, cls.req.preferred)
-
-        cls.good, _ = filter_offers(
-            cls.offers,
-            cls.req
+        cls.tid_grenser = tidsgrenser(
+            cls.tilbud, cls.krav.preferred
         )
 
-    def test_companies_and_destinations(self):
+        cls.gyldige, _ = finn_tilbud(
+            cls.tilbud,
+            cls.krav
+        )
+
+    # check companies and destinations
+    def test_selskaper_og_reisemaal(self):
         self.assertEqual(
-            len(self.companies),
+            len(self.selskaper),
             5
         )
 
         self.assertEqual(
-            len(self.dsts),
+            len(self.reisemaal),
             15
         )
 
-    def test_all_company_destination_pairs(self):
-        combos = {
-            (off.company, off.destination)
-            for off in self.offers
+    # check company-destination pairs
+    def test_alle_selskap_maal(self):
+        par = {     # pairs
+            (tur.company, tur.destination)
+            for tur in self.tilbud
         }
 
         self.assertEqual(
-            len(combos),
+            len(par),
             75
         )
 
-    def test_invalid_records_rejected(self):
+    # Check invalid offers
+    def test_ugyldige_tilbud(self):
         self.assertEqual(
-            len(self.offers),
+            len(self.tilbud),
             152
         )
 
         self.assertEqual(
-            self.bad,
+            self.avvist,
             10
         )
 
-    def test_missing_input(self):
-        with tempfile.TemporaryDirectory() as tmp:
+    # check missing data
+    def test_mangler_data(self):
+        with tempfile.TemporaryDirectory() as mappe:    # folder
             with self.assertRaises(DataError):
-                load_data(
-                    Path(tmp)
+                last_marked(
+                    Path(mappe)
                 )
 
-    def test_invalid_price(self):
-        row = {
+    # check invalid price
+    def test_ugyldig_pris(self):
+        rad = {        # row
             "offer_id": "OF-9999",
             "company": "SR",
             "origin": "Madrid",
@@ -128,17 +130,18 @@ class TestBusBidder(unittest.TestCase):
         }
 
         with self.assertRaises(DataError):
-            parse_offer(
-                row,
-                self.companies,
-                self.dsts
+            lag_tilbud(
+                rad,
+                self.selskaper,
+                self.reisemaal
             )
 
-    def test_all_hard_constraints(self):
-        off = self.good[0]
+    # check all hard constraints
+    def test_alle_krav(self):
+        tur = self.gyldige[0]       # offer
 
-        req = replace(
-            self.req,
+        krav = replace(             # request
+            self.krav,
             budget=Decimal("1"),
             max_transfers=0,
             luggage=10,
@@ -148,9 +151,9 @@ class TestBusBidder(unittest.TestCase):
             refundable=True
         )
 
-        bad = reasons(
-            off,
-            req
+        avvist = sjekk_tilbud(       # rejection reasons
+            tur,
+            krav
         )
 
         self.assertTrue(
@@ -162,11 +165,12 @@ class TestBusBidder(unittest.TestCase):
                 "seats",
                 "changeable",
                 "refundable"
-            }.issubset(bad)
+            }.issubset(avvist)
         )
 
-    def test_missing_offer_value(self):
-        row = {
+    # check missing offer value
+    def test_manglende_verdi(self):
+        rad = {        # row
             "offer_id": "OF-9999",
             "company": "SR",
             "origin": "Madrid",
@@ -184,329 +188,410 @@ class TestBusBidder(unittest.TestCase):
         }
 
         with self.assertRaises(DataError):
-            parse_offer(
-                row,
-                self.companies,
-                self.dsts
+            lag_tilbud(
+                rad,
+                self.selskaper,
+                self.reisemaal
             )
 
-    def test_budget_boundary(self):
-        off = self.good[0]
+    # check price boundary
+    def test_prisgrense(self):
+        tur = self.gyldige[0]       # offer
 
-        req = replace(
-            self.req,
-            budget=off.price
+        krav = replace(
+            self.krav,
+            budget=tur.price
         )
 
-        good, _ = filter_offers(
-            [off],
-            req
+        gyldige, _ = finn_tilbud(    # valid offers
+            [tur],
+            krav
         )
 
         self.assertEqual(
-            good,
-            [off]
+            gyldige,
+            [tur]
         )
 
-    def test_no_seats(self):
-        off = replace(
-            self.good[0],
+    # Check no available seats
+    def test_ingen_seter(self):
+        tur = replace(
+            self.gyldige[0],
             seats=0
         )
 
-        good, _ = filter_offers(
-            [off],
-            self.req
+        gyldige, _ = finn_tilbud(
+            [tur],
+            self.krav
         )
 
         self.assertEqual(
-            good,
+            gyldige,
             []
         )
 
-    def test_hard_changeability(self):
-        off = next(
-            off for off in self.good
-            if not off.changeable
+    # Check changeable ticket requirement
+    def test_krav_om_endring(self):
+        tur = next(
+            tur for tur in self.gyldige
+            if not tur.changeable
         )
 
-        req = replace(
-            self.req,
+        krav = replace(
+            self.krav,
             changeable=True
         )
 
-        good, _ = filter_offers(
-            [off],
-            req
+        gyldige, _ = finn_tilbud(
+            [tur],
+            krav
         )
 
         self.assertEqual(
-            good,
+            gyldige,
             []
         )
 
-    def test_invalid_weights(self):
+    # check invalid weights
+    def test_ugyldige_vekter(self):
         with self.assertRaises(DataError):
             Weights(
                 40, 20, 20, 10
             )
 
-    def test_past_travel_date_rejected(self):
-        with self.assertRaises(DataError):
-            Request(
-                "Malaga",
-                date(2026, 11, 11),
-                date(2026, 11, 12)
-            )
+    # check past travel date
+    def test_gammel_dato_godtas(self):
+        krav = Request(
+            "Malaga",
+            date(2026, 11, 11),
+            date(2026, 11, 12)
+        )
 
-    def test_today_travel_date_accepted(self):
-        req = Request(
+        self.assertEqual(
+            krav.start,
+            date(2026, 11, 11)
+        )
+
+    # check same-day travel
+    def test_samme_dato_godtas(self):
+        krav = Request(
             "Malaga",
             date(2026, 11, 12),
             date(2026, 11, 12)
         )
 
         self.assertEqual(
-            req.start,
+            krav.start,
             date(2026, 11, 12)
         )
 
-    def test_future_travel_date_accepted(self):
-        req = Request(
+    # check later travel date
+    def test_senere_dato_godtas(self):
+        krav = Request(
             "Malaga",
             date(2026, 11, 13),
             date(2026, 11, 13)
         )
 
         self.assertEqual(
-            req.start,
+            krav.start,
             date(2026, 11, 13)
         )
 
-
-    def test_invalid_request(self):
+    # Check invalid date range
+    def test_ugyldig_krav(self):
         with self.assertRaises(DataError):
             replace(
-                self.req,
+                self.krav,
                 start=date(2026, 11, 13)
             )
 
-    def test_ranking_reproducible(self):
-        w = self.profiles["Business"]
+    # check consistent ranking
+    def test_lik_rangering(self):
+        vekter = self.profiler["Business"]     # weights
 
-        a = rank_offers(
-            self.good,
-            self.req,
-            w,
-            self.bounds,
-            self.time_bounds
+        forste = ranger_tilbud(                 # first ranking
+            self.gyldige,
+            self.krav,
+            vekter,
+            self.grenser,
+            self.tid_grenser
         )
 
-        b = rank_offers(
-            list(reversed(self.good)),
-            self.req,
-            w,
-            self.bounds,
-            self.time_bounds
+        andre = ranger_tilbud(                  # second ranking
+            list(reversed(self.gyldige)),
+            self.krav,
+            vekter,
+            self.grenser,
+            self.tid_grenser
         )
 
         self.assertEqual(
-            a,
-            b
+            forste,
+            andre
         )
 
         self.assertTrue(
             all(
-                0 <= r.total <= 100
-                for r in a
+                0 <= res.total <= 100
+                for res in forste
             )
         )
 
-    def test_global_min_max(self):
+    # check global score bounds
+    def test_felles_grenser(self):
         self.assertEqual(
-            self.bounds["price"],
+            self.grenser["price"],
             (
-                min(float(off.price) for off in self.offers),
-                max(float(off.price) for off in self.offers)
+                min(float(tur.price) for tur in self.tilbud),
+                max(float(tur.price) for tur in self.tilbud)
             )
         )
 
         self.assertEqual(
-            self.bounds["duration"],
+            self.grenser["duration"],
             (
-                min(off.duration for off in self.offers),
-                max(off.duration for off in self.offers)
+                min(tur.duration for tur in self.tilbud),
+                max(tur.duration for tur in self.tilbud)
             )
         )
 
-    def test_scores_do_not_depend_on_filtered_set(self):
-        w = Weights(50, 50, 0, 0)
-        off = self.good[0]
+    # check scores are independent of the filtered offers
+    def test_poeng_uavhengig_av_utvalg(self):
+        vekter = Weights(50, 50, 0, 0)
+        tur = self.gyldige[0]
 
-        alone = rank_offers(
-            [off], self.req, w, self.bounds, self.time_bounds
+        alene = ranger_tilbud(        # alone
+            [tur], self.krav, vekter,
+            self.grenser, self.tid_grenser
         )[0]
 
-        together = next(
-            r for r in rank_offers(
-                self.good, self.req, w, self.bounds, self.time_bounds
+        sammen = next(               # together
+            res for res in ranger_tilbud(
+                self.gyldige, self.krav, vekter,
+                self.grenser, self.tid_grenser
             )
-            if r.offer.id == off.id
+            if res.offer.id == tur.id
         )
 
-        self.assertEqual(alone.points, together.points)
-        self.assertAlmostEqual(alone.total, together.total)
+        self.assertEqual(alene.points, sammen.points)
+        self.assertAlmostEqual(alene.total, sammen.total)
 
-    def test_equal_bounds_are_handled(self):
-        off = self.good[0]
-        bounds = get_bounds([off])
-        w = Weights(50, 50, 0, 0)
+    # check equal normalization bounds
+    def test_like_grenser(self):
+        tur = self.gyldige[0]
+        grenser = poenggrenser([tur])       # bounds
+        vekter = Weights(50, 50, 0, 0)
 
-        r = rank_offers(
-            [off], self.req, w, bounds,
-            get_time_bounds([off], self.req.preferred)
+        res = ranger_tilbud(
+            [tur], self.krav, vekter,
+            grenser,
+            tidsgrenser([tur], self.krav.preferred)
         )[0]
-        self.assertEqual(r.points["price"], 100.0)
-        self.assertEqual(r.points["duration"], 100.0)
 
-    def test_time_bounds_use_complete_dataset(self):
-        gaps = [time_gap(off, self.req.preferred) for off in self.offers]
-        self.assertEqual(self.time_bounds, (min(gaps), max(gaps)))
-
-    def test_time_score_does_not_depend_on_filtered_offers(self):
-        w = Weights(0, 0, 100, 0)
-        off = self.good[0]
-        alone = rank_offers(
-            [off], self.req, w, self.bounds, self.time_bounds
-        )[0]
-        together = next(
-            r for r in rank_offers(
-                self.good, self.req, w, self.bounds, self.time_bounds
-            ) if r.offer.id == off.id
+        self.assertEqual(
+            res.points["price"], 100.0
         )
-        self.assertEqual(alone.points["time"], together.points["time"])
 
-    def test_preferred_time_changes_bounds(self):
-        other = time(22, 0)
-        other_bounds = get_time_bounds(self.offers, other)
-        self.assertNotEqual(self.time_bounds, other_bounds)
+        self.assertEqual(
+            res.points["duration"], 100.0
+        )
 
-    def test_no_preferred_time_uses_neutral_score(self):
-        req = replace(self.req, preferred=None)
-        self.assertIsNone(get_time_bounds(self.offers, req.preferred))
-        w = Weights(0, 0, 100, 0)
-        rank = rank_offers(self.good, req, w, self.bounds, None)
-        self.assertTrue(all(r.points["time"] == 50.0 for r in rank))
+    # check time bounds use all offers
+    def test_tidsgrenser_alle_tilbud(self):
+        avstander = [       # time differences
+            tidsavstand(tur, self.krav.preferred)
+            for tur in self.tilbud
+        ]
 
-    def test_equal_time_gaps_receive_same_score(self):
-        off = self.good[0]
-        time_bounds = get_time_bounds([off], self.req.preferred)
-        w = Weights(0, 0, 100, 0)
-        rank = rank_offers([off], self.req, w, self.bounds, time_bounds)
-        self.assertEqual(rank[0].points["time"], 100.0)
+        self.assertEqual(
+            self.tid_grenser,
+            (min(avstander), max(avstander))
+        )
 
-    def test_profiles_can_differ(self):
-        winners = {
-            name: rank_offers(
-                self.good,
-                self.req,
-                w,
-                self.bounds,
-                self.time_bounds
+    # check time scores are independent of filtered offers
+    def test_tidspoeng_uavhengig_av_utvalg(self):
+        vekter = Weights(0, 0, 100, 0)
+        tur = self.gyldige[0]
+
+        alene = ranger_tilbud(
+            [tur], self.krav, vekter,
+            self.grenser, self.tid_grenser
+        )[0]
+
+        sammen = next(
+            res for res in ranger_tilbud(
+                self.gyldige, self.krav, vekter,
+                self.grenser, self.tid_grenser
+            )
+            if res.offer.id == tur.id
+        )
+
+        self.assertEqual(
+            alene.points["time"],
+            sammen.points["time"]
+        )
+
+    # check different preferred departure times
+    def test_onsket_tid_endrer_grenser(self):
+        annen = time(22, 0)        # another time
+        andre_grenser = tidsgrenser(
+            self.tilbud, annen
+        )
+
+        self.assertNotEqual(
+            self.tid_grenser,
+            andre_grenser
+        )
+
+    # check no preferred departure time
+    def test_uten_onsket_tid(self):
+        krav = replace(
+            self.krav, preferred=None
+        )
+
+        self.assertIsNone(
+            tidsgrenser(self.tilbud, krav.preferred)
+        )
+
+        vekter = Weights(0, 0, 100, 0)
+
+        rangering = ranger_tilbud(       # ranking
+            self.gyldige, krav, vekter,
+            self.grenser, None
+        )
+
+        self.assertTrue(
+            all(
+                res.points["time"] == 50.0
+                for res in rangering
+            )
+        )
+
+    # check equal departure-time differences
+    def test_like_tidsavstander(self):
+        tur = self.gyldige[0]
+        tid_grenser = tidsgrenser(       # time bounds
+            [tur], self.krav.preferred
+        )
+
+        vekter = Weights(0, 0, 100, 0)
+
+        rangering = ranger_tilbud(
+            [tur], self.krav, vekter,
+            self.grenser, tid_grenser
+        )
+
+        self.assertEqual(
+            rangering[0].points["time"], 100.0
+        )
+
+    # check different profile recommendations
+    def test_ulike_profiler(self):
+        vinnere = {        # winners
+            navn: ranger_tilbud(
+                self.gyldige,
+                self.krav,
+                vekter,
+                self.grenser,
+                self.tid_grenser
             )[0].offer.company
 
-            for name, w in self.profiles.items()
+            for navn, vekter in self.profiler.items()
         }
 
         self.assertEqual(
-            len(set(winners.values())),
+            len(set(vinnere.values())),
             3
         )
 
-    def test_booking_persists_and_uses_seats(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            off = replace(
-                self.good[0],
+    # check saved booking and seat availability
+    def test_bestilling_lagres(self):
+        with tempfile.TemporaryDirectory() as mappe:
+            tur = replace(
+                self.gyldige[0],
                 seats=2
             )
 
-            path = Path(tmp) / "book.sqlite3"
+            sti = Path(mappe) / "book.sqlite3"    # path
 
-            svc = Booker(
-                path,
-                [off]
+            bestiller = Booker(                  # booking manager
+                sti,
+                [tur]
             )
 
-            b = svc.book(
-                off,
+            bestilling = bestiller.lag_bestilling(    # booking
+                tur,
                 "Alex",
                 1
             )
 
             self.assertEqual(
-                b["qty"],
+                bestilling["qty"],
                 1
             )
 
             self.assertEqual(
-                svc.available([off])[0].seats,
+                bestiller.ledige_seter([tur])[0].seats,
                 1
             )
 
-            svc2 = Booker(
-                path,
-                [off]
+            ny_bestiller = Booker(       # new booking manager
+                sti,
+                [tur]
             )
 
             self.assertEqual(
-                svc2.available([off])[0].seats,
+                ny_bestiller.ledige_seter([tur])[0].seats,
                 1
             )
 
             self.assertEqual(
-                svc2.find(b["ref"]),
-                b
+                ny_bestiller.finn_bestilling(bestilling["ref"]),
+                bestilling
             )
 
             self.assertEqual(
-                b["changeable"],
-                int(off.changeable)
+                bestilling["changeable"],
+                int(tur.changeable)
             )
 
-    def test_booking_prevents_overbooking(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            off = replace(
-                self.good[0],
+    # check overbooking prevention
+    def test_stopper_overbooking(self):
+        with tempfile.TemporaryDirectory() as mappe:
+            tur = replace(
+                self.gyldige[0],
                 seats=1
             )
 
-            svc = Booker(
-                Path(tmp) / "book.sqlite3",
-                [off]
+            bestiller = Booker(
+                Path(mappe) / "book.sqlite3",
+                [tur]
             )
 
-            svc.book(
-                off,
+            bestiller.lag_bestilling(
+                tur,
                 "Alex",
                 1
             )
 
             with self.assertRaises(BookingError):
-                svc.book(
-                    off,
+                bestiller.lag_bestilling(
+                    tur,
                     "Pat",
                     1
                 )
 
-    def test_invalid_booking_reference(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            svc = Booker(
-                Path(tmp) / "book.sqlite3",
-                [self.good[0]]
+    # check invalid booking reference
+    def test_ugyldig_bestillingskode(self):
+        with tempfile.TemporaryDirectory() as mappe:
+            bestiller = Booker(
+                Path(mappe) / "book.sqlite3",
+                [self.gyldige[0]]
             )
 
             with self.assertRaises(BookingError):
-                svc.find(
+                bestiller.finn_bestilling(
                     "invalid"
                 )
 

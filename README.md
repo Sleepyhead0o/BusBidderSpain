@@ -36,4 +36,20 @@ BusBidder-Spain/<br/>
 │   └── profiles.json<br/>
 │<br/>
 ├── logs/<br/>
+│   └── busbidder.log<br/>
 └── output/<br/>
+│   ├── rejected.csv<br/>
+│   └── bookings.sqlite3<br/>
+
+## Project files
+
+- `main.py`: Tkinter GUI
+- `data_generator.py`: creates simulated data
+- `tests.py`: unit tests
+- `src/busbidder/models.py`: data models and validation
+- `src/busbidder/market.py`: data loading, filtering and ranking
+- `src/busbidder/booking.py`: SQLite bookings
+- `data/`: generated CSV and JSON files
+- `output/`: booking database and rejected records
+- `logs/`: application logs
+

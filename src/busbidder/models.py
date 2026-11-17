@@ -1,3 +1,4 @@
+
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from decimal import Decimal
@@ -66,11 +67,6 @@ class Request:
                 "Destination or travel dates are invalid"
             )
 
-        if self.start < date.today():
-            raise DataError(
-                "Travel date cannot be in the past"
-            )
-        
         if self.budget is not None:
             if not self.budget.is_finite() or self.budget <= 0:
                 raise DataError(
@@ -103,7 +99,7 @@ class Weights:
     flexibility: float
 
     def __post_init__(self):
-        vals = (
+        verdier = (         # values
             self.price,
             self.duration,
             self.time,
@@ -111,14 +107,14 @@ class Weights:
         )
 
         if any(
-            not isfinite(v) or v < 0
-            for v in vals
+            not isfinite(verdi) or verdi < 0
+            for verdi in verdier
         ):
             raise DataError(
                 "Weights must be non-negative numbers"
             )
 
-        if abs(sum(vals) - 100) > 0.000001:
+        if abs(sum(verdier) - 100) > 0.000001:
             raise DataError(
                 "Weights must add up to 100%"
             )

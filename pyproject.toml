@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "busbidder-spain"
 version = "1.0.0"
-description = "A bus booking and weighted offer-ranking application for simulated journeys in Spain."
+description = "A bus booking and weighted offer-ranking application for simulated journeys in Spain"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []

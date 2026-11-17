@@ -1,3 +1,4 @@
+
 import csv
 import json
 import logging
@@ -11,139 +12,152 @@ from decimal import Decimal, InvalidOperation
 from .models import Company, DataError, Offer, Score, Weights
 
 
-LOG = logging.getLogger(__name__)
+LOGG = logging.getLogger(__name__)
 
-ID_RULE = re.compile(r"OF-\d{4,6}$")
+# ID pattern
+ID_REGEL = re.compile(r"OF-\d{4,6}$")
 
 
-def rows(path, needed):
+# read CSV (path, required fields )
+def les_csv(sti, feltkrav):
     try:
-        with path.open(
+        with sti.open(
             newline="",
             encoding="utf-8-sig"
-        ) as f:
+        ) as fil:
 
-            rd = csv.DictReader(f)
+            leser = csv.DictReader(fil)     # read
 
-            if not rd.fieldnames:
+            if not leser.fieldnames:
                 raise DataError(
-                    f"Missing headers in {path.name}."
+                    f"Missing headers in {sti.name}."
                 )
 
-            if not set(needed).issubset(rd.fieldnames):
+            if not set(feltkrav).issubset(leser.fieldnames):
                 raise DataError(
-                    f"Missing columns in {path.name}."
+                    f"Missing columns in {sti.name}."
                 )
 
-            return list(rd)
+            return list(leser)
 
     except (OSError, UnicodeError, csv.Error) as err:
         raise DataError(
-            f"Cannot read {path}: {err}"
+            f"Cannot read {sti}: {err}"
         ) from err
 
 
-def number(row, key, smallest=0):
-    val = (row.get(key) or "").strip()
+# read integer (row, field, min)
+def les_heltall(rad, felt, minst=0):
+    verdi = (rad.get(felt) or "").strip()
 
-    if not val.isdigit():
+    if not verdi.isdigit():
         raise DataError(
-            f"Invalid {key}."
+            f"Invalid {felt}."
         )
 
-    n = int(val)
+    nr = int(verdi)
 
-    if n < smallest:
+    if nr < minst:
         raise DataError(
-            f"Invalid {key}."
+            f"Invalid {felt}."
         )
 
-    return n
+    return nr
 
 
-def yesno(row, key):
-    val = (row.get(key) or "").strip().lower()
+# read boolean
+def les_boolsk(rad, felt):
+    verdi = (rad.get(felt) or "").strip().lower()
 
-    if val not in ("true", "false"):
-        raise DataError(
-            f"Invalid {key}."
+    # If not boolean then "wrong" 
+    if verdi not in ("true", "false"):
+        raise DataError(        
+            f"Invalid {felt}."
         )
 
-    return val == "true"
+    return verdi == "true"
 
 
-def parse_offer(row, companies, destinations):
+# create offer (row, companies, destinations)
+def lag_tilbud(rad, selskap, reisemaal):
     try:
-        oid = (row.get("offer_id") or "").strip()
-        co = (row.get("company") or "").strip()
-        dst = (row.get("destination") or "").strip()
+        
+        tilbuds_id = (rad.get("offer_id") or "").strip()  # offer ID
+        sels = (rad.get("company") or "").strip()         # company
+        maal = (rad.get("destination") or "").strip()     # destination
 
-        if not ID_RULE.fullmatch(oid):
+        if not ID_REGEL.fullmatch(tilbuds_id):
             raise DataError(
                 "Invalid offer ID."
             )
 
-        if co not in companies or dst not in destinations:
+        if sels not in selskap or maal not in reisemaal:
             raise DataError(
                 "Unknown company or destination."
             )
 
-        if (row.get("origin") or "").strip() != "Madrid":
+        if (rad.get("origin") or "").strip() != "Madrid":
             raise DataError(
                 "Origin must be Madrid."
             )
 
-        dep = datetime.fromisoformat(row["depart"])
-        arr = datetime.fromisoformat(row["arrive"])
+        
+        avgang = datetime.fromisoformat(rad["depart"])    # departure
+        ankomst = datetime.fromisoformat(rad["arrive"])   # arrival
 
-        if dep.tzinfo or arr.tzinfo or arr <= dep:
+        if avgang.tzinfo or ankomst.tzinfo or ankomst <= avgang:
             raise DataError(
                 "Invalid departure/arrival order."
             )
 
-        mins = number(row, "minutes", 1)
+        
+        minutter = les_heltall(rad, "minutes", 1)       # minutes 
 
-        if (arr - dep).total_seconds() != mins * 60:
+        if (ankomst - avgang).total_seconds() != minutter * 60:
             raise DataError(
                 "Duration does not match the times."
             )
 
-        price = Decimal(row["price"])
-        rating = float(row["rating"])
+        
+        pris = Decimal(rad["price"])        # price
+        vurdering = float(rad["rating"])    # rating
 
-        if price <= 0 or not price.is_finite():
+        if pris <= 0 or not pris.is_finite():           
             raise DataError("Price must be positive")
 
-        if not math.isfinite(rating) or not 1 <= rating <= 5:
-            raise DataError("Invalid rating, since the number must be between 1 and 5")
+        if not math.isfinite(vurdering) or not 1 <= vurdering <= 5:
+            raise DataError(
+                "Invalid rating, since the number must be between 1 and 5"
+            )
 
-        eco = (row.get("emissions") or "").strip()
+        
+        utslipp = (rad.get("emissions") or "").strip()      # emissions
 
-        if eco:
-            eco = float(eco)
+        if utslipp:
+            utslipp = float(utslipp)
         else:
-            eco = None
+            utslipp = None
 
-        if eco is not None:
-            if not math.isfinite(eco) or eco < 0:
+        if utslipp is not None:
+            if not math.isfinite(utslipp) or utslipp < 0:
                 raise DataError(
                     "Invalid emissions."
                 )
 
         return Offer(
-            oid,
-            co,
-            dst,
-            dep,
-            arr,
-            price,
-            number(row, "transfers"),
-            number(row, "luggage"),
-            yesno(row, "changeable"),
-            yesno(row, "refundable"),
-            number(row, "seats"),
-            rating,
-            eco
+            tilbuds_id,
+            sels,
+            maal,
+            avgang,
+            ankomst,
+            pris,
+            les_heltall(rad, "transfers"),
+            les_heltall(rad, "luggage"),
+            les_boolsk(rad, "changeable"),
+            les_boolsk(rad, "refundable"),
+            les_heltall(rad, "seats"),
+            vurdering,
+            utslipp
         )
 
     except (
@@ -158,48 +172,56 @@ def parse_offer(row, companies, destinations):
         ) from err
 
 
-def load_data(folder):
-    companies = {}
+# last_marked = load market data
+# mappe = folder
+def last_marked(mappe):
+    # selskap = companies
+    selskap = {}
 
-    cr = rows(
-        folder / "companies.csv",
+    # s_rader = company rows
+    s_rader = les_csv(
+        mappe / "companies.csv",
         ["code", "name", "description"]
     )
 
-    for row in cr:
-        co = (row["code"] or "").strip()
-        name = (row["name"] or "").strip()
-        desc = (row["description"] or "").strip()
+    for rad in s_rader:
+        
+        sels = (rad["code"] or "").strip()                      # company code
+        navn = (rad["name"] or "").strip()                      # name
+        beskrivelse = (rad["description"] or "").strip()        # description
 
-        if not co or not name or not desc or co in companies:
+        if not sels or not navn or not beskrivelse or sels in selskap:
             raise DataError(
                 "Invalid or duplicate company."
             )
 
-        companies[co] = Company(
-            co,
-            name,
-            desc
+        selskap[sels] = Company(
+            sels,
+            navn,
+            beskrivelse
         )
 
-    destinations = set()
+    
+    reisemaal = set()       # several destinations
 
-    dr = rows(
-        folder / "destinations.csv",
+    
+    m_rader = les_csv(          # destination rows
+        mappe / "destinations.csv",
         ["name"]
     )
 
-    for row in dr:
-        dst = (row["name"] or "").strip()
+    for rad in m_rader:
+        maal = (rad["name"] or "").strip()          # name of one destination
 
-        if not dst or dst in destinations or dst == "Madrid":
+        if not maal or maal in reisemaal or maal == "Madrid":
             raise DataError(
                 "Invalid or duplicate destination."
             )
 
-        destinations.add(dst)
+        reisemaal.add(maal)
 
-    cols = [
+    
+    kolonner = [        # columns
         "offer_id",
         "company",
         "origin",
@@ -216,86 +238,92 @@ def load_data(folder):
         "rating"
     ]
 
-    offers = []
-    bad = []
-    used = set()
+    
+    tilbud = []         # offers
+    avvist = []         # rejected
+    brukte = set()      # used IDs
 
-    for line, row in enumerate(
-        rows(folder / "offers.csv", cols),
+    # line number
+    for linje, rad in enumerate(
+        les_csv(mappe / "offers.csv", kolonner),
         2
     ):
         try:
-            off = parse_offer(
-                row,
-                companies,
-                destinations
+            # tur = offer
+            tur = lag_tilbud(
+                rad,
+                selskap,
+                reisemaal
             )
 
-            if off.id in used:
+            if tur.id in brukte:
                 raise DataError(
                     "Duplicate offer ID."
                 )
 
-            used.add(off.id)
-            offers.append(off)
+            brukte.add(tur.id)
+            tilbud.append(tur)
 
         except DataError as err:
-            LOG.warning(
+            LOGG.warning(
                 "Rejected line %d: %s",
-                line,
+                linje,
                 err
             )
 
-            bad.append({
-                "line": line,
-                "id": row.get("offer_id", ""),
+            avvist.append({
+                "line": linje,
+                "id": rad.get("offer_id", ""),
                 "reason": str(err)
             })
 
-    out = folder.parent / "output" / "rejected.csv"
-    out.parent.mkdir(
+    # output file
+    utfil = mappe.parent / "output" / "rejected.csv"
+    utfil.parent.mkdir(
         parents=True,
         exist_ok=True
     )
 
-    with out.open(
+    with utfil.open(
         "w",
         newline="",
         encoding="utf-8"
-    ) as f:
+    ) as fil:
 
-        wr = csv.DictWriter(
-            f,
+        skriver = csv.DictWriter(
+            fil,
             ["line", "id", "reason"]
         )
 
-        wr.writeheader()
-        wr.writerows(bad)
+        skriver.writeheader()
+        skriver.writerows(avvist)
 
-    if not offers:
+    if not tilbud:
         raise DataError(
             "No valid offers were found."
         )
 
-    return companies, destinations, offers, len(bad)
+    return selskap, reisemaal, tilbud, len(avvist)
 
 
-def loading_profiles(path):
+# load profiles
+def last_profiler(sti):
     try:
-        with path.open(encoding="utf-8") as f:
-            cfg = json.load(f)
+        with sti.open(encoding="utf-8") as fil:
+            data = json.load(fil)
 
-        profiles = {
-            name: Weights(**w)
-            for name, w in cfg.items()
+        
+        profiler = {                    # profiles
+            navn: Weights(**vekt)       # weights
+            for navn, vekt in data.items()
         }
 
-        if len(profiles) < 3:
+        if len(profiler) < 3:
             raise DataError(
                 "At least three profiles are required."
             )
 
-        return profiles
+        return profiler
 
     except (
         OSError,
@@ -309,232 +337,259 @@ def loading_profiles(path):
         ) from err
 
 
-def reasons(off, req):
-    bad = []
+# check offer (offer, request)
+def sjekk_tilbud(tur, krav):
+    
+    avvist = []         # rejection reasons
 
-    if off.destination != req.destination:
-        bad.append("destination")
+    if tur.destination != krav.destination:
+        avvist.append("destination")
 
-    if not req.start <= off.day <= req.end:
-        bad.append("date")
+    if not krav.start <= tur.day <= krav.end:       # hard constraint, bus departue is outside selcted dates
+        avvist.append("date")
 
-    if req.budget is not None:
-        if off.price > req.budget:
-            bad.append("budget")
+    if krav.budget is not None:
+        if tur.price > krav.budget:
+            avvist.append("budget")
 
-    if off.seats < req.seats:
-        bad.append("seats")
+    if tur.seats < krav.seats:
+        avvist.append("seats")
 
-    if req.max_transfers is not None:
-        if off.transfers > req.max_transfers:
-            bad.append("transfers")
+    if krav.max_transfers is not None:
+        if tur.transfers > krav.max_transfers:
+            avvist.append("transfers")
 
-    if off.luggage < req.luggage:
-        bad.append("luggage")
+    if tur.luggage < krav.luggage:
+        avvist.append("luggage")
 
-    if req.max_dur is not None:
-        if off.duration > req.max_dur:
-            bad.append("duration")
+    if krav.max_dur is not None:
+        if tur.duration > krav.max_dur:
+            avvist.append("duration")
 
-    if req.changeable and not off.changeable:
-        bad.append("changeable")
+    if krav.changeable and not tur.changeable:
+        avvist.append("changeable")
 
-    if req.refundable and not off.refundable:
-        bad.append("refundable")
+    if krav.refundable and not tur.refundable:
+        avvist.append("refundable")
 
-    return bad
+    return avvist
 
 
-def filter_offers(offers, req):
-    good = []
-    bad = Counter()
+# find matching offers
+def finn_tilbud(tilbud, krav):
+    
+    gyldige = []            # valid offers
+    avvist = Counter()      # rejection counts
 
-    for off in offers:
-        why = reasons(off, req)
+    for tur in tilbud:
+        
+        arsaker = sjekk_tilbud(tur, krav)       # reasons
 
-        if why:
-            bad.update(why)
+        if arsaker:
+            avvist.update(arsaker)
         else:
-            good.append(off)
+            gyldige.append(tur)
 
-    return good, bad
+    return gyldige, avvist
 
 
-def clamp(n):
+# limit score
+def begrens_poeng(nr):
     return max(
         0.0,
-        min(100.0, n)
+        min(100.0, nr)
     )
 
 
-def get_bounds(offers):
-    # Calculate limits once from all valid, unfiltered offers.
-    if not offers:
+# score bounds
+def poenggrenser(tilbud):
+    # find lowest and highest value from all valid offers
+    if not tilbud:      # offers
         raise DataError("No offers available for normalization.")
 
     return {
         "price": (
-            min(float(off.price) for off in offers),
-            max(float(off.price) for off in offers)
+            min(float(tur.price) for tur in tilbud),    # lowest
+            max(float(tur.price) for tur in tilbud)     # highest 
         ),
         "duration": (
-            min(off.duration for off in offers),
-            max(off.duration for off in offers)
+            min(tur.duration for tur in tilbud),        # lowest
+            max(tur.duration for tur in tilbud)         # highest 
         )
     }
 
 
-def normalise(value, low, high):
-    # A smaller price or shorter duration receives more points.
-    if low == high:
+# normalize lower values (value, low, high)
+def skaler_lavt(verdi, lav, hoy):
+    # Smaller receive more points
+    if lav == hoy:
         return 100.0
 
-    return clamp(
-        100 * (high - float(value)) / (high - low)
+    return begrens_poeng(
+        100 * (hoy - float(verdi)) / (hoy - lav)
     )
 
 
-def time_gap(off, preferred):
-    # Measure time difference between bus departure time and users preferred one
-    a = off.depart.hour * 60 + off.depart.minute
-    b = preferred.hour * 60 + preferred.minute
+# time difference (offer, preferred time)
+def tidsavstand(tur, onsket):
+    # Time difference between bus departure time and user's preferred one
+    
+    avgang_min = tur.depart.hour * 60 + tur.depart.minute       # departure minutes
+    onsket_min = onsket.hour * 60 + onsket.minute               # preferred minutes
 
-    gap = abs(a - b)
+    
+    avstand = abs(avgang_min - onsket_min)      # difference
 
-    if gap > 720:
-        gap = 1440 - gap
+    if avstand > 720:       # time diff greater then 12 hours
+        avstand = 1440 - avstand
 
-    return gap
+    return avstand
 
 
-def get_time_bounds(offers, preferred):
-    # Calculated once per request from ALL valid (unfiltered) offers.
-    if preferred is None:
+# time bounds
+def tidsgrenser(tilbud, onsket):
+    # once per request from all valid offers
+    if onsket is None:
         return None
 
-    if not offers:
+    if not tilbud:
         raise DataError("No offers available for normalization.")
 
-    gaps = [time_gap(off, preferred) for off in offers]
-    return min(gaps), max(gaps)
+    
+    avstander = [tidsavstand(tur, onsket) for tur in tilbud]        # time differences
+    return min(avstander), max(avstander)
 
 
-def rank_offers(offers, req, w, bounds, time_bounds):
-    rank = []
+# rank offers
+def ranger_tilbud(tilbud, krav, vekt, grenser, tid_grenser):
+   
+    rangering = []      # ranking
 
-    p_min, p_max = bounds["price"]
-    d_min, d_max = bounds["duration"]
-
-    if req.preferred is not None and time_bounds is None:
+    
+    min_pris, maks_pris = grenser["price"]          # min/max price
+    min_tid, maks_tid = grenser["duration"]         # min/max duration
+    
+    if krav.preferred is not None and tid_grenser is None:      
         raise DataError("Departure-time bounds are required.")
 
-    for off in offers:
-        p = normalise(off.price, p_min, p_max)
-        d = normalise(off.duration, d_min, d_max)
+    for tur in tilbud:
+        
+        p = skaler_lavt(tur.price, min_pris, maks_pris)         # price score
+        d = skaler_lavt(tur.duration, min_tid, maks_tid)        # duration score
 
-        if req.preferred is None:
-            t = 50.0
+        
+        if krav.preferred is None:
+            t = 50.0        # time score
         else:
-            dt = time_gap(off, req.preferred)
-            t = normalise(dt, *time_bounds)
+            dt = tidsavstand(tur, krav.preferred)       # time difference
+            t = skaler_lavt(dt, *tid_grenser)           # time score
 
-        f = 50.0 * (
-            int(off.changeable)
-            + int(off.refundable)
+        
+        fleks = 50.0 * (            # flexibility score
+            int(tur.changeable)
+            + int(tur.refundable)
         )
 
-        pts = {
+        
+        poeng = {       # scores
             "price": p,
             "duration": d,
             "time": t,
-            "flexibility": f
+            "flexibility": fleks
         }
 
-        total = sum(
-            pts[name] * getattr(w, name) / 100
-            for name in pts
+        
+        sum_poeng = sum(        # total score
+            poeng[navn] * getattr(vekt, navn) / 100
+            for navn in poeng
         )
 
-        rank.append(
-            Score(off, pts, total)
+        rangering.append(
+            Score(tur, poeng, sum_poeng)
         )
 
     return sorted(
-        rank,
-        key=lambda r: (
-            -r.total,
-            r.offer.price,
-            r.offer.duration,
-            r.offer.id
+        rangering,
+        key=lambda res: (
+            -res.total,
+            res.offer.price,
+            res.offer.duration,
+            res.offer.id
         )
     )
 
 
-def explain(rank, companies):
-    if not rank:
+# explain top recommendation
+def forklar_topp(rangering, selskap):
+    if not rangering:
         return "No matching offers."
 
-    top = rank[0]
-    off = top.offer
+    
+    beste = rangering[0]        # best result
+    tur = beste.offer
 
-    pros = []
-    cons = []
+    
+    pluss = []          # advantages
+    minus = []          # disadvantages
 
-    if off.transfers == 0:
-        pros.append("direct journey")
+    if tur.transfers == 0:      # no transfer
+        pluss.append("direct journey")
 
-    if top.points["time"] >= 85:
-        pros.append("relatively convenient departure")
+    if beste.points["time"] >= 85:
+        pluss.append("relatively convenient departure")
 
-    if off.changeable and off.refundable:
-        pros.append(
+    if tur.changeable and tur.refundable:
+        pluss.append(
             "flexible and refundable fare"
         )
 
-    low = min(
-        r.offer.price
-        for r in rank
+    
+    lav = min(          # lowest price
+        res.offer.price
+        for res in rangering
     )
 
-    fast = min(
-        r.offer.duration
-        for r in rank
+    
+    raskest = min(          # shortest duration
+        res.offer.duration
+        for res in rangering
     )
 
-    if off.price > low:
-        cons.append(
+    if tur.price > lav:
+        minus.append(
             "not the cheapest offer"
         )
 
-    if off.duration > fast:
-        cons.append(
+    if tur.duration > raskest:
+        minus.append(
             "not the fastest offer"
         )
 
-    if not off.refundable:
-        cons.append(
+    if not tur.refundable:
+        minus.append(
             "non-refundable fare"
         )
 
-    if not off.changeable:
-        cons.append(
+    if not tur.changeable:
+        minus.append(
             "cannot be changed"
         )
 
-    strengths = (
-        ", ".join(pros)
+    
+    fordeler = (        # advantages
+        ", ".join(pluss)
         or "strong weighted score"
     )
 
-    drawbacks = (
-        ", ".join(cons)
+    ulemper = (             # trade-offs
+        ", ".join(minus)
         or "no major disadvantage in these criteria"
     )
 
     return (
-        f"{companies[off.company].name} ranks first "
-        f"({top.total:.1f}/100). "
-        f"Advantages: {strengths}. "
-        f"Trade-offs: {drawbacks}. "
+        f"{selskap[tur.company].name} ranks first "
+        f"({beste.total:.1f}/100). "
+        f"Advantages: {fordeler}. "
+        f"Trade-offs: {ulemper}. "
         "This ranking depends on the chosen preferences."
     )
